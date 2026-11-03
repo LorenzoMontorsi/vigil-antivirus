@@ -20,6 +20,8 @@
 //!   --data <cartella>       log ed eventi (default %ProgramData%\Vigil)
 
 #[cfg(windows)]
+mod behavior;
+#[cfg(windows)]
 mod driver;
 #[cfg(windows)]
 mod ipc;

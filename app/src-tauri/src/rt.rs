@@ -115,6 +115,7 @@ fn notify(app: &AppHandle, ev: &RtEvent) {
             (Tone::Danger, "Script dannoso bloccato", vec![Quarantine, Delete, Ignore])
         }
         RtEventKind::ScriptBlocked => (Tone::Danger, "Script dannoso bloccato", vec![Close]),
+        RtEventKind::RansomwareBlocked => (Tone::Danger, "Ransomware fermato", vec![Open, Close]),
     };
     crate::toast::show(
         app,

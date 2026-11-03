@@ -36,6 +36,9 @@ const PORT_NAME: &str = r"\VigilPort";
 const MAX_PATH_CHARS: usize = 1024;
 const KIND_EXECUTE: u32 = 1;
 const KIND_MODIFIED_CLOSE: u32 = 2;
+const KIND_RENAME: u32 = 3;
+const KIND_DELETE: u32 = 4;
+const FLAG_EXISTED: u32 = 0x1;
 const VERDICT_ALLOW: u32 = 0;
 const VERDICT_BLOCK: u32 = 1;
 
@@ -43,6 +46,7 @@ const VERDICT_BLOCK: u32 = 1;
 pub(crate) struct Request {
     kind: u32,
     process_id: u32,
+    flags: u32,
     path_length: u32,
     path: [u16; MAX_PATH_CHARS],
 }
@@ -145,14 +149,29 @@ fn reply(port: HANDLE, message_id: u64, block: bool) {
 }
 
 /// Si collega al driver (riprovando finché non è disponibile) e serve le richieste. Non ritorna.
+/// Eventi per l'analisi comportamentale: (percorso, pid, il file esisteva già).
+type BehaviorEvent = (PathBuf, u32, bool);
+
 pub fn run(shared: Arc<Shared>) {
     let (write_tx, write_rx) = crossbeam_channel::unbounded::<(PathBuf, u32)>();
     {
         let shared = shared.clone();
         std::thread::spawn(move || write_worker(&shared, write_rx));
     }
+    let behavior = Arc::new(crate::behavior::Behavior::new());
+    let (beh_tx, beh_rx) = crossbeam_channel::unbounded::<BehaviorEvent>();
+    {
+        let (shared, behavior) = (shared.clone(), behavior.clone());
+        std::thread::spawn(move || {
+            for (path, pid, existed) in beh_rx {
+                if !shared.is_paused() {
+                    behavior.on_modified(&shared, &path, pid, existed);
+                }
+            }
+        });
+    }
     loop {
-        match connect_and_serve(&shared, &write_tx) {
+        match connect_and_serve(&shared, &write_tx, &beh_tx, &behavior) {
             Ok(()) => eprintln!("connessione con il driver chiusa, riprovo"),
             Err(e) => eprintln!("{e}"),
         }
@@ -161,7 +180,12 @@ pub fn run(shared: Arc<Shared>) {
     }
 }
 
-fn connect_and_serve(shared: &Arc<Shared>, write_tx: &Sender<(PathBuf, u32)>) -> Result<(), String> {
+fn connect_and_serve(
+    shared: &Arc<Shared>,
+    write_tx: &Sender<(PathBuf, u32)>,
+    beh_tx: &Sender<BehaviorEvent>,
+    behavior: &Arc<crate::behavior::Behavior>,
+) -> Result<(), String> {
     let mut h: HANDLE = std::ptr::null_mut();
     let hr = unsafe {
         FilterConnectCommunicationPort(wide(PORT_NAME).as_ptr(), 0, std::ptr::null(), 0, std::ptr::null(), &mut h)
@@ -188,8 +212,9 @@ fn connect_and_serve(shared: &Arc<Shared>, write_tx: &Sender<(PathBuf, u32)>) ->
     let devices = Arc::new(device_map());
     let workers: Vec<_> = (0..threads)
         .map(|_| {
-            let (shared, port, iocp, devices, tx) = (shared.clone(), port.clone(), iocp.clone(), devices.clone(), write_tx.clone());
-            std::thread::spawn(move || exec_worker(&shared, &port, &iocp, &devices, &tx))
+            let (shared, port, iocp, devices, tx, btx, beh) =
+                (shared.clone(), port.clone(), iocp.clone(), devices.clone(), write_tx.clone(), beh_tx.clone(), behavior.clone());
+            std::thread::spawn(move || exec_worker(&shared, &port, &iocp, &devices, &tx, &btx, &beh))
         })
         .collect();
     for w in workers {
@@ -202,7 +227,15 @@ fn connect_and_serve(shared: &Arc<Shared>, write_tx: &Sender<(PathBuf, u32)>) ->
     Ok(())
 }
 
-fn exec_worker(shared: &Shared, port: &Handle, iocp: &Handle, devices: &[(String, String)], write_tx: &Sender<(PathBuf, u32)>) {
+fn exec_worker(
+    shared: &Shared,
+    port: &Handle,
+    iocp: &Handle,
+    devices: &[(String, String)],
+    write_tx: &Sender<(PathBuf, u32)>,
+    beh_tx: &Sender<BehaviorEvent>,
+    behavior: &crate::behavior::Behavior,
+) {
     loop {
         let mut bytes = 0u32;
         let mut key = 0usize;
@@ -222,10 +255,16 @@ fn exec_worker(shared: &Shared, port: &Handle, iocp: &Handle, devices: &[(String
             }
             continue;
         }
-        let (message_id, kind, pid, nt_path) = unsafe {
+        let (message_id, kind, pid, flags, nt_path) = unsafe {
             let m = &*msg;
             let len = (m.request.path_length as usize / 2).min(MAX_PATH_CHARS);
-            (m.header.MessageId, m.request.kind, m.request.process_id, String::from_utf16_lossy(&m.request.path[..len]))
+            (
+                m.header.MessageId,
+                m.request.kind,
+                m.request.process_id,
+                m.request.flags,
+                String::from_utf16_lossy(&m.request.path[..len]),
+            )
         };
         let dos = to_dos_path(&nt_path, devices);
 
@@ -238,7 +277,19 @@ fn exec_worker(shared: &Shared, port: &Handle, iocp: &Handle, devices: &[(String
                 // Risposta immediata: chi scrive non deve aspettare la scansione.
                 reply(port.0, message_id, false);
                 if let Some(p) = dos {
+                    let _ = beh_tx.send((p.clone(), pid, flags & FLAG_EXISTED != 0));
                     let _ = write_tx.send((p, pid));
+                }
+            }
+            KIND_RENAME | KIND_DELETE => {
+                let block =
+                    !shared.is_paused() && dos.as_deref().is_some_and(|p| behavior.should_block_rename_or_delete(p, pid));
+                // Prima la risposta (l'operazione viene negata), poi si ferma il processo.
+                reply(port.0, message_id, block);
+                if block {
+                    if let Some(p) = &dos {
+                        behavior.stop_after_block(shared, p, pid);
+                    }
                 }
             }
             _ => reply(port.0, message_id, false),
@@ -358,9 +409,10 @@ mod tests {
 
     #[test]
     fn layout_matches_driver() {
-        assert_eq!(size_of::<Request>(), 12 + 2048);
+        // VIGIL_REQUEST: 4 ULONG + 1024 WCHAR
+        assert_eq!(size_of::<Request>(), 16 + 2048);
         assert_eq!(size_of::<Reply>(), 4);
-        assert!(MESSAGE_SIZE as usize >= 16 + 12 + 2048);
+        assert!(MESSAGE_SIZE as usize >= 16 + 16 + 2048);
         assert_eq!(std::mem::offset_of!(Message, request), 16);
     }
 }

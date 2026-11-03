@@ -1,6 +1,6 @@
 /*
  * Strutture condivise tra il driver VigilFlt e il servizio in user mode.
- * Qualsiasi modifica va replicata nel lato Rust (crates/kclient).
+ * Qualsiasi modifica va replicata nel lato Rust (crates/rtd/src/driver.rs).
  */
 #pragma once
 
@@ -12,7 +12,14 @@ typedef enum _VIGIL_REQUEST_KIND {
     VigilRequestExecute = 1,
     /* Un file aperto in scrittura e modificato è stato chiuso: solo notifica. */
     VigilRequestModifiedClose = 2,
+    /* Un file sta per essere rinominato (Path = nome attuale): il servizio può bloccarlo. */
+    VigilRequestRename = 3,
+    /* Un file sta per essere eliminato: il servizio può bloccarlo. */
+    VigilRequestDelete = 4,
 } VIGIL_REQUEST_KIND;
+
+/* Flags di VIGIL_REQUEST */
+#define VIGIL_FLAG_EXISTED 0x1  /* ModifiedClose: il file esisteva già (riscritto, non creato) */
 
 typedef enum _VIGIL_VERDICT {
     VigilVerdictAllow = 0,
@@ -22,6 +29,7 @@ typedef enum _VIGIL_VERDICT {
 typedef struct _VIGIL_REQUEST {
     unsigned long Kind;          /* VIGIL_REQUEST_KIND */
     unsigned long ProcessId;     /* processo che ha causato l'operazione */
+    unsigned long Flags;         /* VIGIL_FLAG_* */
     unsigned long PathLength;    /* in byte, senza terminatore */
     wchar_t Path[VIGIL_MAX_PATH_CHARS]; /* percorso NT normalizzato (\Device\HarddiskVolumeN\...) */
 } VIGIL_REQUEST;

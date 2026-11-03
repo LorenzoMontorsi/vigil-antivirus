@@ -301,6 +301,7 @@ const EVENT_LABEL: Record<RtEvent["kind"], string> = {
   detected: "Minaccia rilevata",
   quarantine_failed: "Quarantena non riuscita",
   script_blocked: "Script bloccato",
+  ransomware_blocked: "Ransomware fermato",
 };
 
 function RealtimeActivity({ events }: { events: RtEvent[] }) {

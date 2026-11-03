@@ -192,6 +192,7 @@ export function quarantineRequest(r: ScanResult): QuarantineRequest | null {
 export interface RtStats {
   scripts_checked: number;
   scripts_blocked: number;
+  ransomware_blocked: number;
   exec_checked: number;
   exec_blocked: number;
   exec_cached: number;
@@ -214,7 +215,7 @@ export interface RtStatus {
   exclusions: number;
 }
 
-export type RtEventKind = "blocked" | "quarantined" | "detected" | "quarantine_failed" | "script_blocked";
+export type RtEventKind = "blocked" | "quarantined" | "detected" | "quarantine_failed" | "script_blocked" | "ransomware_blocked";
 
 export interface RtEvent {
   id: number;

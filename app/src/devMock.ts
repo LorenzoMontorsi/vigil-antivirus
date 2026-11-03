@@ -83,7 +83,7 @@ const rtStatus = {
     auto_quarantine: true,
     yara_rules: 5136,
     hash_signatures: 923,
-    stats: { scripts_checked: 912, scripts_blocked: 1, exec_checked: 18342, exec_blocked: 2, exec_cached: 17110, writes_checked: 4210, threats_found: 3, quarantined: 1 },
+    stats: { scripts_checked: 912, scripts_blocked: 1, ransomware_blocked: 0, exec_checked: 18342, exec_blocked: 2, exec_cached: 17110, writes_checked: 4210, threats_found: 3, quarantined: 1 },
     last_event_id: 3,
     paused_until: 0,
     exclusions: 0,

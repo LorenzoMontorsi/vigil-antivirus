@@ -5,7 +5,10 @@
  *   essere mappato come codice eseguibile chiede un verdetto al servizio e,
  *   se è "blocca", nega l'operazione (il processo/DLL non parte).
  * - IRP_MJ_CREATE (post) + IRP_MJ_WRITE (pre) + IRP_MJ_CLEANUP (pre):
- *   i file aperti in scrittura e modificati vengono notificati alla chiusura.
+ *   i file aperti in scrittura e modificati vengono notificati alla chiusura,
+ *   indicando se esistevano già (riscrittura) o sono stati creati.
+ * - IRP_MJ_SET_INFORMATION (pre): rinomine ed eliminazioni vengono notificate e
+ *   il servizio può bloccarle (file esca dell'anti-ransomware, autodifesa).
  *
  * Principi:
  * - fail-open: se il servizio non è connesso o non risponde in tempo,
@@ -20,6 +23,7 @@
 #define VIGIL_TAG 'lgiV'
 #define EXECUTE_TIMEOUT_MS 30000   /* scansione di un eseguibile prima del blocco */
 #define CLOSE_TIMEOUT_MS   2000    /* notifica di chiusura: non deve rallentare chi scrive */
+#define SETINFO_TIMEOUT_MS 2000    /* rinomina/eliminazione: il servizio risponde subito */
 
 typedef struct _VIGIL_GLOBALS {
     PFLT_FILTER Filter;
@@ -32,6 +36,7 @@ static VIGIL_GLOBALS Globals;
 
 typedef struct _VIGIL_HANDLE_CONTEXT {
     BOOLEAN Modified;
+    BOOLEAN Existed;   /* il file c'era già all'apertura (non creato da questo handle) */
 } VIGIL_HANDLE_CONTEXT, *PVIGIL_HANDLE_CONTEXT;
 
 DRIVER_INITIALIZE DriverEntry;
@@ -46,12 +51,15 @@ static FLT_PREOP_CALLBACK_STATUS FLTAPI PreWrite(_Inout_ PFLT_CALLBACK_DATA Data
                                                  _Flt_CompletionContext_Outptr_ PVOID* CompletionContext);
 static FLT_PREOP_CALLBACK_STATUS FLTAPI PreCleanup(_Inout_ PFLT_CALLBACK_DATA Data, _In_ PCFLT_RELATED_OBJECTS FltObjects,
                                                    _Flt_CompletionContext_Outptr_ PVOID* CompletionContext);
+static FLT_PREOP_CALLBACK_STATUS FLTAPI PreSetInformation(_Inout_ PFLT_CALLBACK_DATA Data, _In_ PCFLT_RELATED_OBJECTS FltObjects,
+                                                          _Flt_CompletionContext_Outptr_ PVOID* CompletionContext);
 
 static const FLT_OPERATION_REGISTRATION Callbacks[] = {
     { IRP_MJ_ACQUIRE_FOR_SECTION_SYNCHRONIZATION, 0, PreSectionSync, NULL },
     { IRP_MJ_CREATE, 0, NULL, PostCreate },
     { IRP_MJ_WRITE, FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO, PreWrite, NULL },
     { IRP_MJ_CLEANUP, 0, PreCleanup, NULL },
+    { IRP_MJ_SET_INFORMATION, FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO, PreSetInformation, NULL },
     { IRP_MJ_OPERATION_END }
 };
 
@@ -110,7 +118,7 @@ static BOOLEAN ShouldSkip(_In_ PFLT_CALLBACK_DATA Data, _In_ PCFLT_RELATED_OBJEC
 }
 
 /* Invia una richiesta al servizio. Restituisce il verdetto; Allow in caso di errori o timeout. */
-static VIGIL_VERDICT AskService(_In_ PFLT_CALLBACK_DATA Data, _In_ VIGIL_REQUEST_KIND Kind, _In_ ULONG TimeoutMs)
+static VIGIL_VERDICT AskService(_In_ PFLT_CALLBACK_DATA Data, _In_ VIGIL_REQUEST_KIND Kind, _In_ ULONG Flags, _In_ ULONG TimeoutMs)
 {
     PFLT_FILE_NAME_INFORMATION nameInfo = NULL;
     VIGIL_REQUEST* req = NULL;
@@ -127,6 +135,7 @@ static VIGIL_VERDICT AskService(_In_ PFLT_CALLBACK_DATA Data, _In_ VIGIL_REQUEST
 
     req->Kind = (ULONG)Kind;
     req->ProcessId = FltGetRequestorProcessId(Data);
+    req->Flags = Flags;
     req->PathLength = min((ULONG)nameInfo->Name.Length, (ULONG)(sizeof(req->Path) - sizeof(WCHAR)));
     RtlCopyMemory(req->Path, nameInfo->Name.Buffer, req->PathLength);
     req->Path[req->PathLength / sizeof(WCHAR)] = L'\0';
@@ -163,7 +172,7 @@ static FLT_PREOP_CALLBACK_STATUS FLTAPI PreSectionSync(_Inout_ PFLT_CALLBACK_DAT
 
     /* Il pre-callback arriva prima che il file system acquisisca i lock:
        il servizio può leggere il file senza rischio di deadlock. */
-    if (AskService(Data, VigilRequestExecute, EXECUTE_TIMEOUT_MS) == VigilVerdictBlock) {
+    if (AskService(Data, VigilRequestExecute, 0, EXECUTE_TIMEOUT_MS) == VigilVerdictBlock) {
         DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_WARNING_LEVEL, "VigilFlt: esecuzione bloccata\n");
         Data->IoStatus.Status = STATUS_ACCESS_DENIED;
         Data->IoStatus.Information = 0;
@@ -193,6 +202,8 @@ static FLT_POSTOP_CALLBACK_STATUS FLTAPI PostCreate(_Inout_ PFLT_CALLBACK_DATA D
     if (NT_SUCCESS(FltAllocateContext(Globals.Filter, FLT_STREAMHANDLE_CONTEXT, sizeof(VIGIL_HANDLE_CONTEXT),
                                       NonPagedPoolNx, (PFLT_CONTEXT*)&ctx))) {
         ctx->Modified = FALSE;
+        /* FILE_CREATED = nuovo; FILE_OPENED/OVERWRITTEN/SUPERSEDED = c'era già. */
+        ctx->Existed = Data->IoStatus.Information != FILE_CREATED;
         (VOID)FltSetStreamHandleContext(FltObjects->Instance, FltObjects->FileObject,
                                         FLT_SET_CONTEXT_KEEP_IF_EXISTS, ctx, NULL);
         FltReleaseContext(ctx);
@@ -218,15 +229,53 @@ static FLT_PREOP_CALLBACK_STATUS FLTAPI PreCleanup(_Inout_ PFLT_CALLBACK_DATA Da
 {
     PVIGIL_HANDLE_CONTEXT ctx = NULL;
     BOOLEAN modified = FALSE;
+    ULONG flags = 0;
     *CompletionContext = NULL;
 
     if (NT_SUCCESS(FltGetStreamHandleContext(FltObjects->Instance, FltObjects->FileObject, (PFLT_CONTEXT*)&ctx))) {
         modified = ctx->Modified;
+        if (ctx->Existed) flags |= VIGIL_FLAG_EXISTED;
         FltReleaseContext(ctx);
     }
     /* Il contesto esiste solo per handle aperti in scrittura da un programma utente. */
     if (modified && !ShouldSkip(Data, FltObjects, FALSE)) {
-        (VOID)AskService(Data, VigilRequestModifiedClose, CLOSE_TIMEOUT_MS);
+        (VOID)AskService(Data, VigilRequestModifiedClose, flags, CLOSE_TIMEOUT_MS);
+    }
+    return FLT_PREOP_SUCCESS_NO_CALLBACK;
+}
+
+static FLT_PREOP_CALLBACK_STATUS FLTAPI PreSetInformation(_Inout_ PFLT_CALLBACK_DATA Data, _In_ PCFLT_RELATED_OBJECTS FltObjects,
+                                                          _Flt_CompletionContext_Outptr_ PVOID* CompletionContext)
+{
+    FILE_INFORMATION_CLASS cls = Data->Iopb->Parameters.SetFileInformation.FileInformationClass;
+    PVOID buf = Data->Iopb->Parameters.SetFileInformation.InfoBuffer;
+    VIGIL_REQUEST_KIND kind;
+    *CompletionContext = NULL;
+
+    switch (cls) {
+    case FileRenameInformation:
+    case FileRenameInformationEx:
+        kind = VigilRequestRename;
+        break;
+    case FileDispositionInformation:
+        if (buf == NULL || !((PFILE_DISPOSITION_INFORMATION)buf)->DeleteFile) return FLT_PREOP_SUCCESS_NO_CALLBACK;
+        kind = VigilRequestDelete;
+        break;
+    case FileDispositionInformationEx:
+        if (buf == NULL || !FlagOn(((PFILE_DISPOSITION_INFORMATION_EX)buf)->Flags, FILE_DISPOSITION_DELETE))
+            return FLT_PREOP_SUCCESS_NO_CALLBACK;
+        kind = VigilRequestDelete;
+        break;
+    default:
+        return FLT_PREOP_SUCCESS_NO_CALLBACK;
+    }
+    if (ShouldSkip(Data, FltObjects, TRUE))
+        return FLT_PREOP_SUCCESS_NO_CALLBACK;
+
+    if (AskService(Data, kind, 0, SETINFO_TIMEOUT_MS) == VigilVerdictBlock) {
+        Data->IoStatus.Status = STATUS_ACCESS_DENIED;
+        Data->IoStatus.Information = 0;
+        return FLT_PREOP_COMPLETE;
     }
     return FLT_PREOP_SUCCESS_NO_CALLBACK;
 }

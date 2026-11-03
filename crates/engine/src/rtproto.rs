@@ -40,6 +40,8 @@ pub struct RtStats {
     pub scripts_checked: u64,
     #[serde(default)]
     pub scripts_blocked: u64,
+    #[serde(default)]
+    pub ransomware_blocked: u64,
     pub exec_checked: u64,
     pub exec_blocked: u64,
     pub exec_cached: u64,
@@ -84,6 +86,8 @@ pub enum RtEventKind {
     QuarantineFailed,
     /// Script dannoso bloccato prima dell'esecuzione (AMSI).
     ScriptBlocked,
+    /// Processo fermato per comportamento da ransomware.
+    RansomwareBlocked,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
