@@ -1,0 +1,17 @@
+[package]
+name = "vigil-rtd"
+description = "Vigil: lato utente della protezione in tempo reale (collegato al minifilter VigilFlt)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vigil-engine = { path = "../engine" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_Storage_InstallableFileSystems",
+    "Win32_System_IO",
+] }

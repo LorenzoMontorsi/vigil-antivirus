@@ -1,0 +1,10 @@
+/target
+node_modules/
+/app/dist
+/app/src-tauri/gen/schemas
+*.log
+/vendor
+/prova-quarantena
+/driver/packages
+/driver/tools
+/driver/build

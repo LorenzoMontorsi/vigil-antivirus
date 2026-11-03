@@ -1,0 +1,4 @@
+# Runtime C di Visual C++ incluso negli eseguibili: niente dipendenza da
+# VCRUNTIME140.dll, che su un Windows appena installato può mancare.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

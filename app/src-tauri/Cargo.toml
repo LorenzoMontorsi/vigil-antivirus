@@ -1,0 +1,26 @@
+[package]
+name = "vigil"
+description = "Vigil Antivirus"
+authors = ["Lorenzo Montorsi"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+# Il suffisso `_lib` evita il conflitto di nomi tra lib e bin su Windows
+# (https://github.com/rust-lang/cargo/issues/8519).
+name = "vigil_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+vigil-engine = { path = "../../crates/engine" }
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
