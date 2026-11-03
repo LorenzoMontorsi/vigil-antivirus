@@ -88,3 +88,20 @@ Da fare:
 - la quarantena del servizio sta in `C:\ProgramData\Vigil\quarantine`: va mostrata nella pagina Quarantena
 - ClamAV sul percorso in tempo reale, AMSI, ETW, autodifesa, installer unico (app + servizio + driver)
 - altitudine ufficiale da Microsoft e firma del driver per poterlo usare fuori dalla VM
+
+## 5. Prossimo passo: installer unico (piano, non ancora implementato)
+
+Verificato: hook NSIS di Tauri `NSIS_HOOK_PREINSTALL/POSTINSTALL/PREUNINSTALL/POSTUNINSTALL`,
+chiavi `bundle.windows.nsis.installerHooks` e `installMode: "perMachine"`.
+
+1. `scripts/build-installer.ps1`: compila vigil-rtd, vigil-amsi, driver (firmato di test) e li copia
+   in `app/src-tauri/payload/` (da ignorare in git); `bundle.resources` li mette in `$INSTDIR`.
+2. PREINSTALL: `sc stop VigilRtd` (con l'autodifesa attiva i file non si possono sovrascrivere).
+3. POSTINSTALL: `vigil-rtd setup` (da scrivere): driver con sc.exe/reg.exe come `driver/vm/install.ps1`,
+   prova `fltmc load` — se fallisce (PC senza testsigning) servizio SENZA dipendenza dal driver
+   (restano scansioni + AMSI); servizio VigilRtd; registrazione AMSI; cartella firme condivisa
+   `C:\ProgramData\Vigil-firme` (fuori dalle cartelle protette) che l'app aggiorna dopo ogni update.
+4. PREUNINSTALL: `vigil-rtd teardown` (ferma e rimuove servizio, AMSI, driver).
+5. Prova nella VM con `setup.exe /S`.
+
+Poi: tipo di minaccia negli avvisi (`Trojan:Win/Agent`).
