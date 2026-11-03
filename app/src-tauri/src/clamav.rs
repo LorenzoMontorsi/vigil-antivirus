@@ -17,6 +17,124 @@ use crate::util::hide_window;
 
 pub const PORT: u16 = 33100;
 
+/// Versione di ClamAV usata da Vigil: la stessa di scripts/fetch-clamav.ps1.
+/// L'hash è quello del pacchetto ufficiale verificato con la firma GPG di Cisco Talos.
+pub const CLAMAV_VERSION: &str = "1.5.4";
+const CLAMAV_SHA256: &str = "0d9e0228b2674137ea1a2853566c98a0278ad52ab2582c3d6dbd75373848c395";
+const UA: &str = concat!("Vigil/", env!("CARGO_PKG_VERSION"));
+
+/// Scarica ClamAV dalle release ufficiali, ne verifica lo SHA-256 ed estrae in `dest`
+/// solo i file che servono (clamd, freshclam, DLL, certificati, licenze).
+pub fn download(dest: &Path, mut log: impl FnMut(&str)) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    use std::io::{Read, Write};
+
+    let name = format!("clamav-{CLAMAV_VERSION}.win.x64");
+    let url = format!("https://github.com/Cisco-Talos/clamav/releases/download/clamav-{CLAMAV_VERSION}/{name}.zip");
+    let parent = dest.parent().ok_or("cartella di destinazione non valida")?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let zip_path = parent.join(format!("{name}.zip.part"));
+
+    let resp = ureq::get(&url)
+        .set("User-Agent", UA)
+        .timeout(Duration::from_secs(1800))
+        .call()
+        .map_err(|e| format!("download di ClamAV: {e}"))?;
+    let total_mb = resp.header("Content-Length").and_then(|v| v.parse::<u64>().ok()).map(|b| b / (1024 * 1024));
+    let mut reader = resp.into_reader().take(512 * 1024 * 1024);
+    let mut file = fs::File::create(&zip_path).map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 256 * 1024];
+    let (mut done, mut next_report) = (0u64, 0u64);
+    loop {
+        let n = reader.read(&mut buf).map_err(|e| format!("download interrotto: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        hasher.update(&buf[..n]);
+        done += n as u64;
+        if done >= next_report {
+            let mb = done / (1024 * 1024);
+            log(&match total_mb {
+                Some(t) => format!("scaricati {mb} di {t} MB"),
+                None => format!("scaricati {mb} MB"),
+            });
+            next_report += 25 * 1024 * 1024;
+        }
+    }
+    drop(file);
+    let hash: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    if hash != CLAMAV_SHA256 {
+        let _ = fs::remove_file(&zip_path);
+        return Err(format!("SHA-256 del pacchetto non corrispondente (atteso {CLAMAV_SHA256}, trovato {hash}): scartato"));
+    }
+    log("SHA-256 verificato, estrazione…");
+
+    let tmp = dest.with_extension("tmp");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(fs::File::open(&zip_path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+        // enclosed_name rifiuta i percorsi che uscirebbero dalla cartella ("..", assoluti).
+        let Some(rel) = entry.enclosed_name() else { continue };
+        let Ok(rel) = rel.strip_prefix(&name) else { continue };
+        let rel_str = rel.to_string_lossy().replace('\\', "/");
+        let top_level_dll = rel_str.ends_with(".dll") && !rel_str.contains('/') && rel_str != "pdcurses.dll";
+        let keep = matches!(rel_str.as_str(), "clamd.exe" | "freshclam.exe" | "COPYING.txt")
+            || top_level_dll
+            || rel_str.starts_with("certs/")
+            || rel_str.starts_with("COPYING/");
+        if !keep || entry.is_dir() {
+            continue;
+        }
+        let out = tmp.join(rel);
+        if let Some(p) = out.parent() {
+            fs::create_dir_all(p).map_err(|e| e.to_string())?;
+        }
+        let mut f = fs::File::create(&out).map_err(|e| e.to_string())?;
+        std::io::copy(&mut entry, &mut f).map_err(|e| e.to_string())?;
+    }
+    fs::write(tmp.join("VERSION"), CLAMAV_VERSION).map_err(|e| e.to_string())?;
+    let _ = fs::write(
+        tmp.join("LEGGIMI-CLAMAV.txt"),
+        format!(
+            "ClamAV {CLAMAV_VERSION} - Copyright (C) Cisco Systems, Inc. e contributori.\r\n\
+             Distribuito sotto GNU GPL v2 (vedi COPYING.txt e la cartella COPYING).\r\n\
+             Codice sorgente: https://github.com/Cisco-Talos/clamav/releases/tag/clamav-{CLAMAV_VERSION}\r\n"
+        ),
+    );
+    if !is_valid_install(&tmp) {
+        return Err("pacchetto di ClamAV incompleto".into());
+    }
+    let _ = fs::remove_dir_all(dest);
+    fs::rename(&tmp, dest).map_err(|e| e.to_string())?;
+    let _ = fs::remove_file(&zip_path);
+    Ok(())
+}
+
+/// Su un Windows installato da poco i certificati radice non ci sono tutti:
+/// Windows li scarica da Windows Update solo quando serve a un programma che usa
+/// il SUO motore TLS (Schannel). freshclam usa OpenSSL, che legge l'archivio di
+/// Windows ma non fa scattare quel download, e fallisce con "SSL peer certificate
+/// … was not OK" (errore 60). Un collegamento con curl.exe di Windows (Schannel)
+/// allo stesso sito fa installare il certificato mancante. Innocuo se c'è già.
+fn warm_root_certificates() {
+    let system = std::env::var_os("SystemRoot").map(std::path::PathBuf::from).unwrap_or_else(|| r"C:\Windows".into());
+    let curl = system.join(r"System32\curl.exe");
+    if !curl.is_file() {
+        return;
+    }
+    let mut cmd = Command::new(curl);
+    cmd.args(["-s", "-o", "NUL", "-I", "--max-time", "20", "https://database.clamav.net/"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    hide_window(&mut cmd);
+    let _ = cmd.status();
+}
+
 pub fn is_valid_install(dir: &Path) -> bool {
     dir.join("clamd.exe").is_file() && dir.join("freshclam.exe").is_file()
 }
@@ -97,6 +215,7 @@ impl ClamAv {
             return Err("ClamAV incluso non trovato: reinstalla Vigil (in sviluppo: esegui scripts/fetch-clamav.ps1)".into());
         }
         let (fconf, _) = self.write_configs(max_file_mb)?;
+        warm_root_certificates();
         let mut cmd = Command::new(install.join("freshclam.exe"));
         cmd.arg(format!("--config-file={}", fconf.display()))
             .arg("--stdout")

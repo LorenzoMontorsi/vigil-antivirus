@@ -41,7 +41,10 @@ struct AppState {
     cache_file: PathBuf,
     cache: Mutex<Option<Arc<ScanCache>>>,
     /// Cartella di ClamAV incluso nelle risorse dell'app.
-    clamav_install: PathBuf,
+    /// ClamAV in uso: quello incluso nelle risorse dell'app oppure quello scaricato.
+    clamav_install: RwLock<PathBuf>,
+    /// Dove scaricare ClamAV se quello incluso manca.
+    clamav_download_dir: PathBuf,
     clamav: ClamAv,
     quarantine: Quarantine,
     /// Cartella dati di Vigil: sempre esclusa dalle scansioni.
@@ -51,6 +54,10 @@ struct AppState {
 impl AppState {
     fn settings(&self) -> Settings {
         self.settings.lock().unwrap().clone()
+    }
+
+    fn clamav_dir(&self) -> PathBuf {
+        self.clamav_install.read().unwrap().clone()
     }
 }
 
@@ -156,7 +163,7 @@ fn start_clamav_bg(app: &AppHandle) {
                 notify_status(&app);
             })
         };
-        let res = state.clamav.start(&state.clamav_install, s.max_file_size_mb);
+        let res = state.clamav.start(&state.clamav_dir(), s.max_file_size_mb);
         let _ = notifier.join();
         if let Err(e) = res {
             let _ = app.emit("clamav://error", e);
@@ -217,10 +224,27 @@ fn run_update_bg(app: &AppHandle) -> Result<(), String> {
             }
         }
 
-        if s.clamav_enabled {
+        // ClamAV non incluso nel pacchetto: lo scarichiamo (versione fissata, SHA-256 verificato).
+        let mut clamav_ready = clamav::is_valid_install(&state.clamav_dir());
+        if s.clamav_enabled && !clamav_ready {
+            log(&format!("ClamAV: non trovato, download di ClamAV {} dalle release ufficiali (~225 MB)…", clamav::CLAMAV_VERSION));
+            match clamav::download(&state.clamav_download_dir, |m| log(&format!("ClamAV: {m}"))) {
+                Ok(()) => {
+                    *state.clamav_install.write().unwrap() = state.clamav_download_dir.clone();
+                    clamav_ready = true;
+                    log("ClamAV: installato");
+                }
+                Err(e) => {
+                    log(&format!("ClamAV: errore: {e}"));
+                    sources.push(SourceStatus { name: "ClamAV".into(), ok: false, message: e });
+                }
+            }
+        }
+
+        if s.clamav_enabled && clamav_ready {
             log("ClamAV: aggiornamento con freshclam…");
             let mut last = String::new();
-            match state.clamav.update(&state.clamav_install, s.max_file_size_mb, |line| {
+            match state.clamav.update(&state.clamav_dir(), s.max_file_size_mb, |line| {
                 log(&format!("ClamAV: {line}"));
                 last = line.to_owned();
             }) {
@@ -322,7 +346,7 @@ fn status(state: State<'_, AppState>) -> StatusDto {
         signatures_dir: state.signatures_dir.display().to_string(),
         feeds: FeedState::load(&state.feeds_dir),
         clamav_enabled: s.clamav_enabled,
-        clamav: state.clamav.status(&state.clamav_install),
+        clamav: state.clamav.status(&state.clamav_dir()),
         cache_entries: state.cache.lock().unwrap().as_ref().map_or(0, |c| c.len()),
         quarantine_count: state.quarantine.list().map(|l| l.len()).unwrap_or(0),
     }
@@ -671,10 +695,18 @@ pub fn run() {
 
             let settings_path = config_dir.join("settings.json");
             let settings = Settings::load(&settings_path);
-            let needs_update = settings.auto_update
-                && FeedState::load(&feeds_dir)
-                    .last_update_unix
-                    .is_none_or(|t| util::now_unix().saturating_sub(t) > AUTO_UPDATE_EVERY);
+            // ClamAV: prima quello incluso nel pacchetto, poi quello eventualmente già scaricato.
+            let bundled_clamav = app.path().resource_dir()?.join("clamav");
+            let clamav_download_dir = data_dir.join("clamav-bin");
+            let clamav_install =
+                if clamav::is_valid_install(&bundled_clamav) { bundled_clamav } else { clamav_download_dir.clone() };
+            let clamav_missing = settings.clamav_enabled && !clamav::is_valid_install(&clamav_install);
+
+            let needs_update = clamav_missing
+                || settings.auto_update
+                    && FeedState::load(&feeds_dir)
+                        .last_update_unix
+                        .is_none_or(|t| util::now_unix().saturating_sub(t) > AUTO_UPDATE_EVERY);
 
             app.manage(AppState {
                 // Si parte con le sole regole integrate: l'interfaccia si apre subito.
@@ -688,7 +720,8 @@ pub fn run() {
                 feeds_dir,
                 cache_file: data_dir.join("cache").join("scan-cache.bin"),
                 cache: Mutex::new(None),
-                clamav_install: app.path().resource_dir()?.join("clamav"),
+                clamav_install: RwLock::new(clamav_install),
+                clamav_download_dir,
                 clamav: ClamAv::new(data_dir.join("clamav")),
                 quarantine: Quarantine::open(data_dir.join("quarantine"))?,
                 data_dir: data_dir.clone(),

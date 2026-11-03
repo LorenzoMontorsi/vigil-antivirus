@@ -215,7 +215,7 @@ export default function SettingsPage({ status, rt }: { status: StatusController;
         <p className="hint">
           {clam?.installed
             ? `Incluso in Vigil: ClamAV ${clam.bundled_version ?? ""} (Cisco Talos, licenza GPL v2).`
-            : "ClamAV incluso non trovato: reinstalla Vigil."}
+            : "ClamAV non è ancora presente: Vigil lo scarica da solo (circa 225 MB, SHA-256 verificato) con il prossimo aggiornamento delle firme. Puoi avviarlo subito con «Aggiorna ora»."}
         </p>
         {clam && settings.clamav_enabled && (
           <>

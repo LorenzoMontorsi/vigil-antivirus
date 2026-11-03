@@ -92,7 +92,7 @@ export default function Dashboard({ scan, status: st, rt, go }: Props) {
   const clamState: [ModuleState, string, string] = !s?.clamav_enabled
     ? ["off", "Disattivato", "Attivalo nelle impostazioni"]
     : !clam?.installed
-      ? ["warn", "Non trovato", "ClamAV incluso non trovato: reinstalla Vigil"]
+      ? ["busy", st.status?.updating ? "Download…" : "Da scaricare", "Vigil lo scarica da solo con l'aggiornamento delle firme"]
       : !clam.database
         ? ["warn", "Senza firme", "Premi “Aggiorna firme”"]
         : clam.running
