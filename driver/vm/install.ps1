@@ -1,7 +1,9 @@
 # Eseguito NELLA VM: installa e carica il driver VigilFlt (test-signed).
 $ErrorActionPreference = 'Continue'
 Get-ScheduledTask VigilRtd -ErrorAction SilentlyContinue | Stop-ScheduledTask
-Stop-Process -Name vigil-rtd -Force -ErrorAction SilentlyContinue
+# Il servizio si ferma dal Gestore servizi: con l'autodifesa attiva il processo non si può uccidere.
+Stop-Service VigilRtd -Force -ErrorAction SilentlyContinue
+Start-Sleep 2
 fltmc unload VigilFlt 2>$null | Out-Null
 
 Import-Certificate -FilePath C:\Vigil\VigilTest.cer -CertStoreLocation Cert:\LocalMachine\Root | Out-Null

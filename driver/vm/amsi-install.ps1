@@ -17,6 +17,9 @@ if ($Uninstall) {
 }
 
 New-Item -ItemType Directory -Force $bin | Out-Null
+# Con l'autodifesa attiva, in Program Files\Vigil scrive solo il servizio: va fermato per aggiornare.
+$svc = Get-Service VigilRtd -ErrorAction SilentlyContinue
+if ($svc -and $svc.Status -eq 'Running') { Stop-Service VigilRtd -Force; Start-Sleep 2 }
 # La DLL può essere in uso dai processi aperti: in quel caso si rinomina la vecchia.
 if (Test-Path $dll) { Rename-Item $dll "vigil_amsi.$([DateTime]::Now.Ticks).old" -ErrorAction SilentlyContinue }
 Copy-Item C:\Vigil\vigil_amsi.dll $dll -Force
@@ -29,3 +32,4 @@ Set-ItemProperty "$classKey\InprocServer32" -Name 'ThreadingModel' -Value 'Both'
 New-Item -Path $providerKey -Force | Out-Null
 Set-ItemProperty $providerKey -Name '(default)' -Value 'Vigil AMSI Provider'
 'provider AMSI registrato: ' + $clsid
+if ($svc) { Start-Service VigilRtd }

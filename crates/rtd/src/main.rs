@@ -44,6 +44,7 @@ impl Options {
             auto_quarantine: false,
             threads: 4,
             data_dir: std::env::var_os("ProgramData").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\ProgramData")).join("Vigil"),
+            protect_install_dir: false,
         };
         let mut args = args.peekable();
         while let Some(a) = args.next() {

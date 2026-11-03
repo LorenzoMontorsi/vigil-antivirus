@@ -37,3 +37,13 @@ typedef struct _VIGIL_REQUEST {
 typedef struct _VIGIL_REPLY {
     unsigned long Verdict;       /* VIGIL_VERDICT */
 } VIGIL_REPLY;
+
+/* Messaggio servizio -> driver (FilterSendMessage): cartelle da proteggere
+   (autodifesa). Percorsi NT con barra finale, es. \Device\HarddiskVolume3\Program Files\Vigil\ */
+#define VIGIL_MAX_PROTECTED 4
+#define VIGIL_PROTECTED_CHARS 300
+
+typedef struct _VIGIL_CONFIG {
+    unsigned long Count;
+    wchar_t Paths[VIGIL_MAX_PROTECTED][VIGIL_PROTECTED_CHARS]; /* terminati da zero */
+} VIGIL_CONFIG;

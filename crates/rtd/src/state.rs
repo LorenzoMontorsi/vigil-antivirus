@@ -27,6 +27,9 @@ pub struct Config {
     pub threads: usize,
     /// Cartella per log degli eventi e cache (ProgramData\Vigil).
     pub data_dir: PathBuf,
+    /// Autodifesa anche della cartella del programma (solo come servizio installato:
+    /// in sviluppo bloccherebbe la cartella di compilazione).
+    pub protect_install_dir: bool,
 }
 
 pub struct Shared {
@@ -227,6 +230,7 @@ mod tests {
             auto_quarantine: true,
             threads: 1,
             data_dir: d.path().join("data"),
+            protect_install_dir: false,
         })
         .unwrap();
         (d, s)

@@ -20,7 +20,7 @@ use windows_sys::Win32::{
         FileSystem::QueryDosDeviceW,
         InstallableFileSystems::{
             FILTER_MESSAGE_HEADER, FILTER_REPLY_HEADER, FilterConnectCommunicationPort, FilterGetMessage,
-            FilterReplyMessage,
+            FilterReplyMessage, FilterSendMessage,
         },
     },
     System::{
@@ -68,6 +68,53 @@ pub(crate) struct Reply {
 struct ReplyMessage {
     header: FILTER_REPLY_HEADER,
     reply: Reply,
+}
+
+/// Messaggio servizio -> driver: cartelle da proteggere (vigil_shared.h, VIGIL_CONFIG).
+const MAX_PROTECTED: usize = 4;
+const PROTECTED_CHARS: usize = 300;
+
+#[repr(C)]
+struct DriverConfig {
+    count: u32,
+    paths: [[u16; PROTECTED_CHARS]; MAX_PROTECTED],
+}
+
+/// "C:\Program Files\Vigil" -> "\Device\HarddiskVolume3\Program Files\Vigil\"
+pub(crate) fn to_nt_dir(dos: &Path, map: &[(String, String)]) -> Option<String> {
+    let s = dos.to_string_lossy();
+    let (drive, rest) = s.split_at_checked(2)?;
+    let dev = map.iter().find(|(_, d)| d.eq_ignore_ascii_case(drive)).map(|(dev, _)| dev)?;
+    let rest = rest.trim_end_matches('\\');
+    Some(format!("{dev}{rest}\\"))
+}
+
+/// Autodifesa: comunica al driver le cartelle in cui solo il servizio può scrivere.
+fn send_protected_dirs(port: HANDLE, shared: &Shared, devices: &[(String, String)]) {
+    let mut dirs = vec![shared.config.data_dir.clone()];
+    if shared.config.protect_install_dir {
+        if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
+            dirs.push(d);
+        }
+    }
+    let mut cfg: DriverConfig = unsafe { std::mem::zeroed() };
+    for d in dirs.iter().take(MAX_PROTECTED) {
+        let Some(nt) = to_nt_dir(d, devices) else { continue };
+        let w: Vec<u16> = nt.encode_utf16().collect();
+        if w.len() >= PROTECTED_CHARS {
+            continue;
+        }
+        cfg.paths[cfg.count as usize][..w.len()].copy_from_slice(&w);
+        cfg.count += 1;
+        println!("autodifesa: {}", d.display());
+    }
+    let mut ret = 0u32;
+    let hr = unsafe {
+        FilterSendMessage(port, &cfg as *const _ as *const _, size_of::<DriverConfig>() as u32, std::ptr::null_mut(), 0, &mut ret)
+    };
+    if hr < 0 {
+        eprintln!("configurazione dell'autodifesa non accettata dal driver: HRESULT 0x{hr:08X}");
+    }
 }
 
 /// Dimensione passata a FilterGetMessage: intestazione + richiesta, senza OVERLAPPED.
@@ -210,6 +257,7 @@ fn connect_and_serve(
     println!("collegato al driver VigilFlt, {threads} thread in ascolto");
 
     let devices = Arc::new(device_map());
+    send_protected_dirs(port.0, shared, &devices);
     let workers: Vec<_> = (0..threads)
         .map(|_| {
             let (shared, port, iocp, devices, tx, btx, beh) =
@@ -405,6 +453,18 @@ mod tests {
         assert_eq!(to_dos_path(r"\Device\HarddiskVolume1\Windows\a.exe", &map), Some(PathBuf::from(r"C:\Windows\a.exe")));
         assert_eq!(to_dos_path(r"\Device\HarddiskVolume10\x.dll", &map), Some(PathBuf::from(r"D:\x.dll")));
         assert_eq!(to_dos_path(r"\Device\Mup\server\share", &map), None);
+    }
+
+    #[test]
+    fn converts_dos_dirs_to_nt() {
+        let map = vec![(r"\Device\HarddiskVolume3".to_owned(), "C:".to_owned())];
+        assert_eq!(
+            to_nt_dir(Path::new(r"C:\Program Files\Vigil"), &map).as_deref(),
+            Some(r"\Device\HarddiskVolume3\Program Files\Vigil\")
+        );
+        assert_eq!(to_nt_dir(Path::new(r"c:\ProgramData\Vigil\"), &map).as_deref(), Some(r"\Device\HarddiskVolume3\ProgramData\Vigil\"));
+        assert_eq!(to_nt_dir(Path::new(r"Z:\x"), &map), None);
+        assert_eq!(size_of::<DriverConfig>(), 4 + 4 * 300 * 2);
     }
 
     #[test]

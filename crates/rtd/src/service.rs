@@ -56,7 +56,8 @@ fn run_service(_args: Vec<OsString>) -> Result<(), String> {
 
     handle.set_service_status(status(ServiceState::StartPending, ServiceControlAccept::empty())).map_err(|e| e.to_string())?;
     // Le opzioni arrivano dagli argomenti registrati con `install` (dopo la parola "service").
-    let opts = Options::parse(std::env::args().skip(2))?;
+    let mut opts = Options::parse(std::env::args().skip(2))?;
+    opts.0.protect_install_dir = true;
     let shared = start_protection(opts)?;
     handle
         .set_service_status(status(ServiceState::Running, ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN))

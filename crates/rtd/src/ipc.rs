@@ -204,6 +204,7 @@ mod tests {
             auto_quarantine: false,
             threads: 1,
             data_dir: d.path().to_path_buf(),
+            protect_install_dir: false,
         })
         .unwrap();
         match handle_request(&shared, Request::Status, false, 0) {

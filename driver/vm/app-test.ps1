@@ -17,7 +17,11 @@ $bin = 'C:\Program Files\Vigil'
 New-Item -ItemType Directory -Force $bin | Out-Null
 Get-Process Vigil -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep 1
+# Con l'autodifesa attiva, in Program Files\Vigil scrive solo il servizio: va fermato per aggiornare.
+$svc = Get-Service VigilRtd -ErrorAction SilentlyContinue
+if ($svc -and $svc.Status -eq 'Running') { Stop-Service VigilRtd -Force; Start-Sleep 2 }
 Copy-Item C:\Vigil\Vigil.exe "$bin\Vigil.exe" -Force
+if ($svc) { Start-Service VigilRtd; Start-Sleep 3 }
 
 # 3. Avvio nella sessione interattiva dell'utente (non in quella di SSH, che non ha desktop).
 $action = New-ScheduledTaskAction -Execute "$bin\Vigil.exe"

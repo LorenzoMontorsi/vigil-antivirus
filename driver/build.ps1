@@ -30,7 +30,8 @@ $opt = if ($Configuration -eq 'Release') { '/O2 /Oy- /DNDEBUG' } else { '/Od /Oi
 $defines = '/D_WIN64 /D_AMD64_ /DAMD64 /DWINNT=1 /DNTDDI_VERSION=0x0A000008 /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 /DPOOL_NX_OPTIN=1 /DDEPRECATE_DDK_FUNCTIONS=1'
 $cflags = "/nologo /c /kernel /Zi /W4 /WX /GS /Gy /GF /GR- /Zp8 /Zc:wchar_t- /Zc:inline /fp:precise /cbstring $opt $defines " +
           "/I`"$inc\km`" /I`"$inc\km\crt`" /I`"$sdkInc\shared`" /FI`"$sdkInc\shared\warning.h`" /Fo`"$obj\\`" /Fd`"$obj\vc.pdb`""
-$lflags = "/nologo /DRIVER /SUBSYSTEM:NATIVE,10.00 /ENTRY:GsDriverEntry /NODEFAULTLIB /RELEASE /DEBUG /OPT:REF /OPT:ICF " +
+# /INTEGRITYCHECK: richiesto da ObRegisterCallbacks (protezione del processo del servizio).
+$lflags = "/nologo /DRIVER /SUBSYSTEM:NATIVE,10.00 /ENTRY:GsDriverEntry /NODEFAULTLIB /RELEASE /DEBUG /OPT:REF /OPT:ICF /INTEGRITYCHECK " +
           "/MERGE:_TEXT=.text;_PAGE=PAGE /SECTION:INIT,d /IGNORE:4198,4010,4037,4039,4065,4070,4078,4087,4089,4221 " +
           "/LIBPATH:`"$lib`" ntoskrnl.lib hal.lib BufferOverflowFastFailK.lib fltMgr.lib " +
           "/PDB:`"$out\VigilFlt.pdb`" /OUT:`"$out\VigilFlt.sys`""
