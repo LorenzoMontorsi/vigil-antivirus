@@ -69,6 +69,28 @@ const vault = [
   },
 ];
 
+// ?rt=on: servizio di protezione in tempo reale attivo con qualche evento.
+const rtDemo = new URLSearchParams(location.search).get("rt") === "on";
+const rtStatus = {
+  installed: true,
+  running: true,
+  status: {
+    version: "0.1.0",
+    driver_connected: true,
+    started_at: Math.floor(Date.now() / 1000) - 7200,
+    auto_quarantine: true,
+    yara_rules: 5136,
+    hash_signatures: 923,
+    stats: { exec_checked: 18342, exec_blocked: 2, exec_cached: 17110, writes_checked: 4210, threats_found: 3, quarantined: 1 },
+    last_event_id: 3,
+  },
+};
+const rtEvents = [
+  { id: 1, time: Math.floor(Date.now() / 1000) - 3600, kind: "blocked", path: "C:\\Users\\demo\\Downloads\\keygen.exe", threat: "Win.Trojan.Agent-1234567", process: "C:\\Windows\\explorer.exe", detail: null },
+  { id: 2, time: Math.floor(Date.now() / 1000) - 1800, kind: "quarantined", path: "C:\\Users\\demo\\Downloads\\fattura.zip", threat: "MalwareBazaar.AgentTesla", process: "C:\\Program Files\\Mozilla Firefox\\firefox.exe", detail: null },
+  { id: 3, time: Math.floor(Date.now() / 1000) - 120, kind: "blocked", path: "C:\\Vigil\\prova\\marcato.exe", threat: "Vigil_Test_Quarantena", process: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", detail: null },
+];
+
 export function installDevMock() {
   const w = window as unknown as Record<string, unknown>;
   if (w.__TAURI_INTERNALS__) return;
@@ -93,6 +115,10 @@ export function installDevMock() {
           return status;
         case "get_settings":
           return settings;
+        case "rt_status":
+          return rtDemo ? rtStatus : { installed: false, running: false, status: null };
+        case "rt_events":
+          return rtDemo ? rtEvents : [];
         case "quarantine_list":
           return new URLSearchParams(location.search).get("demo") === "vault" ? vault : [];
         case "quarantine_add":

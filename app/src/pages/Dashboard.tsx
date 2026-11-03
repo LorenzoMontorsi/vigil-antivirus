@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
-import { api, formatAgo, nf } from "../api";
+import { api, formatAgo, nf, rtState, type RtEvent } from "../api";
+import type { RealtimeController } from "../useRealtime";
 import type { ScanController } from "../useScan";
 import type { StatusController } from "../useStatus";
 import type { Page } from "../App";
@@ -26,12 +27,15 @@ const KICKER = {
 interface Props {
   scan: ScanController;
   status: StatusController;
+  rt: RealtimeController;
   go: (p: Page) => void;
 }
 
-export default function Dashboard({ scan, status: st, go }: Props) {
+export default function Dashboard({ scan, status: st, rt, go }: Props) {
   const { status: scanStatus, lastScan, summary } = scan.state;
   const s = st.status;
+  const rs = rtState(rt.status);
+  const rts = rt.status?.status;
 
   const quick = () => {
     scan.start("quick");
@@ -52,6 +56,12 @@ export default function Dashboard({ scan, status: st, go }: Props) {
   const unresolved = threats.filter(
     (t) => t.verdict.kind === "infected" && (!handled[t.path] || handled[t.path].kind === "failed"),
   ).length;
+  if (!lastScan && rs === "active") {
+    tone = "ok";
+    Icon = ShieldCheckIcon;
+    title = "Protezione in tempo reale attiva";
+    subtitle = "Vigil controlla ogni programma prima che venga eseguito e ogni file appena scritto.";
+  }
   if (scanStatus === "running") {
     title = "Scansione in corso…";
     subtitle = `${nf.format(summary.scanned)} file analizzati finora`;
@@ -91,6 +101,17 @@ export default function Dashboard({ scan, status: st, go }: Props) {
             ? ["busy", "Avvio…", "Caricamento di milioni di firme (fino a un minuto)"]
             : ["warn", "Fermo", st.clamavError ?? "clamd non è in esecuzione"];
 
+  const rtModule: { desc: string; state: ModuleState; label: string } = {
+    not_installed: { state: "off" as const, label: "Non installata", desc: "Richiede il driver VigilFlt (per ora solo nella VM di test)" },
+    stopped: { state: "warn" as const, label: "Disattivata", desc: "Il servizio VigilRtd è fermo: attivala dalle Impostazioni" },
+    starting: { state: "busy" as const, label: "Avvio…", desc: "Collegamento al driver in corso" },
+    active: {
+      state: "on" as const,
+      label: "Attiva",
+      desc: `${nf.format(rts?.stats.exec_checked ?? 0)} esecuzioni controllate · ${nf.format(rts?.stats.exec_blocked ?? 0)} bloccate`,
+    },
+  }[rs];
+
   const modules: { name: string; desc: string; state: ModuleState; label: string }[] = [
     {
       name: "Motore Vigil",
@@ -99,7 +120,7 @@ export default function Dashboard({ scan, status: st, go }: Props) {
       label: s?.engine_loading ? "Caricamento…" : "Attivo",
     },
     { name: "Motore ClamAV", desc: clamState[2], state: clamState[0], label: clamState[1] },
-    { name: "Protezione in tempo reale", desc: "Driver minifilter: fasi 3–4", state: "off", label: "In sviluppo" },
+    { name: "Protezione in tempo reale", ...rtModule },
     { name: "Protezione script (AMSI)", desc: "PowerShell, VBScript, JScript: fase 5", state: "off", label: "In sviluppo" },
   ];
 
@@ -222,6 +243,8 @@ export default function Dashboard({ scan, status: st, go }: Props) {
         </section>
       </div>
 
+      <RealtimeActivity events={rt.events} />
+
       <section className="card">
         <h3 className="card-title">Azioni rapide</h3>
         <div className="quick-actions">
@@ -258,5 +281,36 @@ function UpdateLog({ lines, active }: { lines: string[]; active: boolean }) {
       <summary>Registro aggiornamento</summary>
       <pre ref={ref}>{lines.join("\n")}</pre>
     </details>
+  );
+}
+
+const EVENT_LABEL: Record<RtEvent["kind"], string> = {
+  blocked: "Esecuzione bloccata",
+  quarantined: "Messo in quarantena",
+  detected: "Minaccia rilevata",
+  quarantine_failed: "Quarantena non riuscita",
+};
+
+function RealtimeActivity({ events }: { events: RtEvent[] }) {
+  if (events.length === 0) return null;
+  const recent = [...events].reverse().slice(0, 6);
+  return (
+    <section className="card card-danger">
+      <h3 className="card-title">Attività in tempo reale</h3>
+      <ul className="det-list">
+        {recent.map((e) => (
+          <li key={e.id} className={`det ${e.kind === "quarantine_failed" || e.kind === "detected" ? "det-warn" : "det-danger"}`}>
+            <div className="det-head">
+              <span className="threat-name">{e.threat}</span>
+              <span className="pill pill-muted">{EVENT_LABEL[e.kind]}</span>
+              <span className="det-time">{new Date(e.time * 1000).toLocaleString("it-IT")}</span>
+            </div>
+            <div className="mono det-path">{e.path}</div>
+            {e.process && <div className="det-sub">da <span className="mono">{e.process}</span></div>}
+            {e.detail && <div className="det-sub">{e.detail}</div>}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

@@ -2,6 +2,7 @@ import { useState, type CSSProperties } from "react";
 import "./App.css";
 import { useScan } from "./useScan";
 import { useStatus } from "./useStatus";
+import { useRealtime } from "./useRealtime";
 import { BoxIcon, HomeIcon, ScanIcon, SettingsIcon, ShieldIcon } from "./icons";
 import Dashboard from "./pages/Dashboard";
 import ScanPage from "./pages/ScanPage";
@@ -25,6 +26,7 @@ export default function App() {
   });
   const scan = useScan();
   const status = useStatus();
+  const rt = useRealtime();
   const running = scan.state.status === "running";
 
   return (
@@ -62,10 +64,10 @@ export default function App() {
       </aside>
 
       <main className="content">
-        {page === "dashboard" && <Dashboard scan={scan} status={status} go={setPage} />}
+        {page === "dashboard" && <Dashboard scan={scan} status={status} rt={rt} go={setPage} />}
         {page === "scan" && <ScanPage scan={scan} />}
         {page === "quarantine" && <Quarantine />}
-        {page === "settings" && <SettingsPage status={status} />}
+        {page === "settings" && <SettingsPage status={status} rt={rt} />}
       </main>
     </div>
   );

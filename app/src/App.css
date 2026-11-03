@@ -1456,3 +1456,10 @@ select.input option {
   color: var(--ok);
   font-weight: 600;
 }
+
+.det-time {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
+}

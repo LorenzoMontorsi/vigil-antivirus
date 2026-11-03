@@ -4,12 +4,13 @@
 .DESCRIPTION
   I passaggi veri e propri stanno in driver\vm\*.ps1: vengono copiati nella VM ed
   eseguiti lì (passare script multiriga attraverso ssh rovina virgolette e barre).
-.PARAMETER Ip
-  Indirizzo della VM (default: H:\VM\vigil-vmware\ip.txt).
+.PARAMETER VmDir
+  Cartella della VM creata con vm\new-vm.ps1 (contiene ssh\id_ed25519 e ip.txt).
 #>
-param([string]$Ip = (Get-Content H:\VM\vigil-vmware\ip.txt -ErrorAction SilentlyContinue), [switch]$SkipCopy)
-if (-not $Ip) { throw "IP della VM sconosciuto" }
-$key = 'H:\VM\vigil-test\ssh\id_ed25519'
+param([string]$VmDir = 'C:\VM\vigil-vmware', [string]$Ip, [switch]$SkipCopy)
+if (-not $Ip) { $Ip = Get-Content (Join-Path $VmDir 'ip.txt') -ErrorAction SilentlyContinue }
+if (-not $Ip) { throw "IP della VM sconosciuto: manca $VmDir\ip.txt" }
+$key = Join-Path $VmDir 'ssh\id_ed25519'
 $sshOpts = @('-i', $key, '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'LogLevel=ERROR')
 $root = Split-Path -Parent $PSScriptRoot
 
@@ -22,9 +23,11 @@ if (-not $SkipCopy) {
     $stage = Join-Path $env:TEMP 'vigil-vm-stage'
     Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force "$stage\sigs" | Out-Null
-    Copy-Item "$root\driver\build\Release\VigilFlt.sys", "$root\driver\build\VigilTest.cer", "$root\target\release\vigil-rtd.exe" $stage
+    $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { "$root\target" }
+    Copy-Item "$root\driver\build\Release\VigilFlt.sys", "$root\driver\build\VigilTest.cer", "$targetDir\release\vigil-rtd.exe" $stage
     Copy-Item "$PSScriptRoot\vm\*.ps1" $stage
-    Copy-Item "$env:APPDATA\dev.lorenzo.antivirus\signatures\*.yar" "$stage\sigs" -ErrorAction SilentlyContinue
+    # Regola di prova (sempre) + regole YARA-Forge se l'app le ha già scaricate su questo PC.
+    Copy-Item "$PSScriptRoot\vm\prova-vigil.yar" "$stage\sigs"
     Copy-Item "$env:APPDATA\dev.lorenzo.antivirus\feeds\yara-forge.yar" "$stage\sigs" -ErrorAction SilentlyContinue
 
     Write-Host "== copia nella VM ($Ip)" -ForegroundColor Cyan

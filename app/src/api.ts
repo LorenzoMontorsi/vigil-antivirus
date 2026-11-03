@@ -185,3 +185,58 @@ export function quarantineRequest(r: ScanResult): QuarantineRequest | null {
   if (v.kind === "suspicious") return { path: r.path, threat: "Sospetto (euristica)", source: "heuristics" };
   return null;
 }
+
+// ── Protezione in tempo reale (servizio VigilRtd) ─────────────────────────
+
+export interface RtStats {
+  exec_checked: number;
+  exec_blocked: number;
+  exec_cached: number;
+  writes_checked: number;
+  threats_found: number;
+  quarantined: number;
+}
+
+export interface RtStatus {
+  version: string;
+  driver_connected: boolean;
+  started_at: number;
+  auto_quarantine: boolean;
+  yara_rules: number;
+  hash_signatures: number;
+  stats: RtStats;
+  last_event_id: number;
+}
+
+export type RtEventKind = "blocked" | "quarantined" | "detected" | "quarantine_failed";
+
+export interface RtEvent {
+  id: number;
+  time: number;
+  kind: RtEventKind;
+  path: string;
+  threat: string;
+  process: string | null;
+  detail: string | null;
+}
+
+export interface RtUiStatus {
+  installed: boolean;
+  running: boolean;
+  status: RtStatus | null;
+}
+
+/** Stato sintetico per l'interfaccia. */
+export type RtState = "not_installed" | "stopped" | "starting" | "active";
+
+export function rtState(s: RtUiStatus | null): RtState {
+  if (!s || !s.installed) return "not_installed";
+  if (!s.running) return "stopped";
+  return s.status?.driver_connected ? "active" : "starting";
+}
+
+export const rtApi = {
+  status: () => invoke<RtUiStatus>("rt_status"),
+  events: () => invoke<RtEvent[]>("rt_events"),
+  setEnabled: (enabled: boolean) => invoke<void>("rt_set_enabled", { enabled }),
+};

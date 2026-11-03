@@ -97,11 +97,13 @@ static VOID FLTAPI PortDisconnect(_In_opt_ PVOID ConnectionCookie)
 
 /* ── Utilità ────────────────────────────────────────────────────────────── */
 
-/* Operazioni da non esaminare: kernel, servizio stesso, directory, nessun servizio connesso. */
-static BOOLEAN ShouldSkip(_In_ PFLT_CALLBACK_DATA Data, _In_ PCFLT_RELATED_OBJECTS FltObjects)
+/* Operazioni da non esaminare: kernel, servizio stesso, nessun servizio connesso.
+   CheckMode = FALSE per IRP_MJ_CLEANUP: lo genera il gestore I/O in modalità kernel
+   anche quando a chiudere il file è un programma utente. */
+static BOOLEAN ShouldSkip(_In_ PFLT_CALLBACK_DATA Data, _In_ PCFLT_RELATED_OBJECTS FltObjects, _In_ BOOLEAN CheckMode)
 {
     if (Globals.ClientPort == NULL) return TRUE;
-    if (Data->RequestorMode == KernelMode) return TRUE;
+    if (CheckMode && Data->RequestorMode == KernelMode) return TRUE;
     if ((HANDLE)(ULONG_PTR)FltGetRequestorProcessId(Data) == Globals.ServiceProcessId) return TRUE;
     if (FltObjects->FileObject == NULL) return TRUE;
     return FALSE;
@@ -156,7 +158,7 @@ static FLT_PREOP_CALLBACK_STATUS FLTAPI PreSectionSync(_Inout_ PFLT_CALLBACK_DAT
     prot = Data->Iopb->Parameters.AcquireForSectionSynchronization.PageProtection;
     if (prot != PAGE_EXECUTE && prot != PAGE_EXECUTE_READ && prot != PAGE_EXECUTE_READWRITE && prot != PAGE_EXECUTE_WRITECOPY)
         return FLT_PREOP_SUCCESS_NO_CALLBACK;
-    if (ShouldSkip(Data, FltObjects))
+    if (ShouldSkip(Data, FltObjects, TRUE))
         return FLT_PREOP_SUCCESS_NO_CALLBACK;
 
     /* Il pre-callback arriva prima che il file system acquisisca i lock:
@@ -179,7 +181,7 @@ static FLT_POSTOP_CALLBACK_STATUS FLTAPI PostCreate(_Inout_ PFLT_CALLBACK_DATA D
     UNREFERENCED_PARAMETER(CompletionContext);
 
     if (FlagOn(Flags, FLTFL_POST_OPERATION_DRAINING) || !NT_SUCCESS(Data->IoStatus.Status) ||
-        Data->IoStatus.Status == STATUS_REPARSE || ShouldSkip(Data, FltObjects))
+        Data->IoStatus.Status == STATUS_REPARSE || ShouldSkip(Data, FltObjects, TRUE))
         return FLT_POSTOP_FINISHED_PROCESSING;
 
     access = Data->Iopb->Parameters.Create.SecurityContext->DesiredAccess;
@@ -222,7 +224,8 @@ static FLT_PREOP_CALLBACK_STATUS FLTAPI PreCleanup(_Inout_ PFLT_CALLBACK_DATA Da
         modified = ctx->Modified;
         FltReleaseContext(ctx);
     }
-    if (modified && !ShouldSkip(Data, FltObjects)) {
+    /* Il contesto esiste solo per handle aperti in scrittura da un programma utente. */
+    if (modified && !ShouldSkip(Data, FltObjects, FALSE)) {
         (VOID)AskService(Data, VigilRequestModifiedClose, CLOSE_TIMEOUT_MS);
     }
     return FLT_PREOP_SUCCESS_NO_CALLBACK;

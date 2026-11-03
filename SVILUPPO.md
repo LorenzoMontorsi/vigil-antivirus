@@ -39,26 +39,42 @@ mkdir tools; curl.exe -L -o tools\nuget.exe https://dist.nuget.org/win-x86-comma
 | VM di test | `H:\VM\vigil-vmware` (+ chiave SSH in `H:\VM\vigil-test\ssh`) | copiare la cartella, oppure reinstallare con `autounattend.xml` |
 | ClamAV, WDK | `vendor\`, `driver\packages\` | script sopra |
 
-La VM di test: Windows 10 con `testsigning` e debug kernel attivi, utente `vigil`, SSH con chiave.
-Se la VM gira su un PC diverso da quello di sviluppo, la scheda di rete va in **bridged**
-(`ethernet0.connectionType = "bridged"` nel `.vmx`) e l'IP va scritto in `ip.txt` accanto al `.vmx`
-(lo legge `driver\vm-test.ps1`, modificare il percorso se cambia).
+### VM di test
 
-## 4. Stato dei lavori (3 novembre 2026)
+```powershell
+# Crea la VM (installazione di Windows 10 senza clic, testsigning, debug kernel, SSH con chiave)
+.\driver\vm\new-vm.ps1 -WindowsIso C:\percorso\Windows.iso          # default: C:\VM\vigil-vmware
+& "${env:ProgramFiles(x86)}\VMware\VMware Player\vmrun.exe" -T player start C:\VM\vigil-vmware\Vigil-Test.vmx gui
+# ~30 minuti dopo la VM risponde via SSH: scrivere il suo IP in C:\VM\vigil-vmware\ip.txt
+.\driver\vm-test.ps1      # installa driver + servizio VigilRtd e prova blocco e quarantena
+```
 
-Fatto e verificato:
+Usare la ISO **ufficiale** Microsoft di Windows 10 (19041 o successive, italiano: l'`autounattend.xml` usa it-IT).
+Se la VM gira su un PC diverso da quello di sviluppo, la scheda di rete va in **bridged**.
+
+### Consiglio: cartella `target` su un disco interno
+
+La compilazione scrive decine di migliaia di file: su un disco esterno exFAT un solo scollegamento
+rovina il file system. Meglio:
+
+```powershell
+[Environment]::SetEnvironmentVariable('CARGO_TARGET_DIR', 'C:\Dev\vigil-target', 'User')
+```
+
+## 4. Stato dei lavori (3 novembre 2026, sera)
+
+Fatto e verificato nella VM:
 - motore (YARA-Forge, hash, ZIP, euristica, Authenticode, cache), ClamAV incluso, quarantena, GUI
-- minifilter `VigilFlt` + `vigil-rtd`: blocco dell'esecuzione verificato nella VM
+- minifilter `VigilFlt` + servizio Windows `VigilRtd` (avvio automatico, dipende dal driver):
+  - blocco dell'esecuzione delle minacce (con il processo che le ha lanciate)
+  - quarantena automatica dei file appena scritti
+  - named pipe `\\.\pipe\vigil-rtd` con stato, statistiche ed eventi
+- app: modulo e scheda "Attività in tempo reale" in Panoramica, interruttore in Impostazioni (UAC),
+  notifiche di Windows. Verificata con dati di esempio (`?rt=on` nel devMock), **non ancora con il
+  servizio vero**: l'app andrebbe provata dentro la VM.
 
-**In corso (codice scritto, NON ancora compilato/provato del tutto):**
-- `crates/rtd`: `vigil-rtd` come servizio Windows `VigilRtd` (moduli `service`, `ipc`, `driver`, `state`),
-  pipe `\\.\pipe\vigil-rtd`, coda per i file scritti con quarantena automatica, cache sull'esecuzione.
-  I test unitari passavano; manca la prova nella VM (`driver\vm-test.ps1`, che ora installa il servizio).
-- `crates/engine/src/rtproto.rs`: protocollo condiviso servizio ↔ app.
-- `app/src-tauri/src/rt.rs`: l'app interroga il servizio ogni 2 s, notifiche Windows, interruttore con UAC.
-  Il backend compilava; **manca tutta la parte React** (tipi in `api.ts`, hook, scheda in Panoramica,
-  sezione in Impostazioni, voci nel `devMock.ts`).
-
-Da fare dopo:
-- la quarantena del servizio sta in `C:\ProgramData\Vigil\quarantine`: va mostrata anche nella pagina Quarantena
-- cache e ClamAV sul percorso in tempo reale, AMSI, ETW, autodifesa, installer
+Da fare:
+- provare l'app nella VM con il servizio vero (serve il runtime WebView2 nella VM)
+- la quarantena del servizio sta in `C:\ProgramData\Vigil\quarantine`: va mostrata nella pagina Quarantena
+- ClamAV sul percorso in tempo reale, AMSI, ETW, autodifesa, installer unico (app + servizio + driver)
+- altitudine ufficiale da Microsoft e firma del driver per poterlo usare fuori dalla VM

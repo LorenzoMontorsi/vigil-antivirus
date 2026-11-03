@@ -1,11 +1,12 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { api, errorText, type RulesPackage, type Settings } from "../api";
+import { api, errorText, nf, rtState, type RulesPackage, type Settings } from "../api";
 import type { StatusController } from "../useStatus";
+import type { RealtimeController } from "../useRealtime";
 import { FileIcon, FolderIcon, XIcon } from "../icons";
 
-export default function SettingsPage({ status }: { status: StatusController }) {
+export default function SettingsPage({ status, rt }: { status: StatusController; rt: RealtimeController }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [ext, setExt] = useState("");
   const [mbKey, setMbKey] = useState("");
@@ -81,6 +82,8 @@ export default function SettingsPage({ status }: { status: StatusController }) {
         {saved && <span className="saved">Salvato</span>}
       </header>
       {err && <div className="banner danger">{err}</div>}
+
+      <RealtimeSection rt={rt} />
 
       <section className="card">
         <h3 className="card-title">Rilevamento</h3>
@@ -303,5 +306,71 @@ function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; title
         onChange={(e) => props.onChange(e.target.checked)}
       />
     </label>
+  );
+}
+
+function RealtimeSection({ rt }: { rt: RealtimeController }) {
+  const state = rtState(rt.status);
+  const st = rt.status?.status;
+  const label = { not_installed: "Non installata", stopped: "Disattivata", starting: "Avvio…", active: "Attiva" }[state];
+  const pill = { not_installed: "pill-off", stopped: "pill-warn", starting: "pill-busy", active: "pill-on" }[state];
+  const on = state === "active" || state === "starting";
+  return (
+    <section className="card">
+      <div className="card-title-row">
+        <h3 className="card-title">Protezione in tempo reale</h3>
+        <span className={`pill ${pill}`}>{label}</span>
+      </div>
+      {state === "not_installed" ? (
+        <p className="hint">
+          Il servizio VigilRtd e il driver VigilFlt non sono installati su questo PC. Per ora funzionano solo in una
+          macchina virtuale di test con la firma dei driver in modalità test: per un PC normale serve un driver firmato
+          da Microsoft.
+        </p>
+      ) : (
+        <>
+          <label className="toggle-row">
+            <div className="toggle-text">
+              <strong>Blocca le minacce in tempo reale</strong>
+              <span>
+                Controlla ogni programma prima che parta e ogni file appena scritto. Per attivarla o disattivarla
+                Windows chiede l'autorizzazione di amministratore: un malware non può spegnerla da solo.
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              className="switch"
+              checked={on}
+              disabled={rt.busy}
+              onChange={(e) => rt.setEnabled(e.target.checked)}
+            />
+          </label>
+          {rt.busy && <p className="hint">In attesa della conferma di Windows…</p>}
+          {rt.error && <p className="inline-error">{rt.error}</p>}
+          {st && (
+            <dl className="stats">
+              <div>
+                <dt>Esecuzioni controllate</dt>
+                <dd>{nf.format(st.stats.exec_checked)}</dd>
+              </div>
+              <div>
+                <dt>Bloccate</dt>
+                <dd className={st.stats.exec_blocked > 0 ? "fg-danger" : ""}>{nf.format(st.stats.exec_blocked)}</dd>
+              </div>
+              <div>
+                <dt>File scritti isolati</dt>
+                <dd>{nf.format(st.stats.quarantined)}</dd>
+              </div>
+            </dl>
+          )}
+          {st && (
+            <p className="hint">
+              Servizio v{st.version} · {nf.format(st.yara_rules)} regole YARA · quarantena automatica dei file scritti{" "}
+              {st.auto_quarantine ? "attiva" : "disattivata"}
+            </p>
+          )}
+        </>
+      )}
+    </section>
   );
 }
