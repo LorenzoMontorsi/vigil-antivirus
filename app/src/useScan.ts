@@ -93,6 +93,13 @@ export function useScan() {
         },
       })),
     );
+    on<{ path: string | null; action: string; ok: boolean }>("toast://handled", ({ path, action, ok }) => {
+      if (!path || !ok || action === "ignore" || action === "close" || action === "open") return;
+      setState((s) => ({
+        ...s,
+        handled: { ...s.handled, [path]: action === "quarantine" ? { kind: "quarantined" } : { kind: "ignored" } },
+      }));
+    });
     on<ScanSummary>("scan://finished", (summary) =>
       setState((s) => ({
         ...s,

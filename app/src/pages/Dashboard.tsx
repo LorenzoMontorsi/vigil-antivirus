@@ -92,7 +92,7 @@ export default function Dashboard({ scan, status: st, rt, go }: Props) {
   const clamState: [ModuleState, string, string] = !s?.clamav_enabled
     ? ["off", "Disattivato", "Attivalo nelle impostazioni"]
     : !clam?.installed
-      ? ["warn", "Da configurare", "Cartella di ClamAV non valida"]
+      ? ["warn", "Non trovato", "ClamAV incluso non trovato: reinstalla Vigil"]
       : !clam.database
         ? ["warn", "Senza firme", "Premi “Aggiorna firme”"]
         : clam.running
@@ -105,6 +105,7 @@ export default function Dashboard({ scan, status: st, rt, go }: Props) {
     not_installed: { state: "off" as const, label: "Non installata", desc: "Richiede il driver VigilFlt (per ora solo nella VM di test)" },
     stopped: { state: "warn" as const, label: "Disattivata", desc: "Il servizio VigilRtd è fermo: attivala dalle Impostazioni" },
     starting: { state: "busy" as const, label: "Avvio…", desc: "Collegamento al driver in corso" },
+    paused: { state: "warn" as const, label: "Sospesa", desc: "Riprendila dal menu dell'icona vicino all'orologio" },
     active: {
       state: "on" as const,
       label: "Attiva",

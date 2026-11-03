@@ -13,9 +13,9 @@ use std::{
 };
 
 use vigil_engine::{
-    Engine, EngineBuilder, ScanCache,
+    Engine, EngineBuilder, Exclusions, ScanCache,
     quarantine::Quarantine,
-    rtproto::{RtEvent, RtEventKind, RtStats, RtStatus},
+    rtproto::{PAUSED_UNTIL_RESTART, RtEvent, RtEventKind, RtStats, RtStatus},
 };
 
 const MAX_EVENTS: usize = 500;
@@ -39,6 +39,12 @@ pub struct Shared {
     next_id: AtomicU64,
     pub driver_connected: AtomicBool,
     started_at: u64,
+    /// 0 = attiva; altrimenti istante di ripresa (o PAUSED_UNTIL_RESTART).
+    paused_until: AtomicU64,
+    exclusions: RwLock<Exclusions>,
+    /// Ultimo blocco per percorso: Windows ritenta subito lo stesso caricamento,
+    /// e un solo evento basta.
+    recent_blocks: Mutex<std::collections::HashMap<String, std::time::Instant>>,
 }
 
 pub fn now() -> u64 {
@@ -77,6 +83,9 @@ impl Shared {
             next_id: AtomicU64::new(1),
             driver_connected: AtomicBool::new(false),
             started_at: now(),
+            paused_until: AtomicU64::new(0),
+            exclusions: RwLock::new(load_exclusions(&config.data_dir)),
+            recent_blocks: Mutex::new(std::collections::HashMap::new()),
             config,
         })
     }
@@ -126,7 +135,62 @@ impl Shared {
         v
     }
 
+    /// `true` se per questo percorso va registrato un nuovo evento di blocco
+    /// (non ne è stato registrato uno negli ultimi 10 secondi).
+    pub fn should_report_block(&self, path: &str) -> bool {
+        let mut m = self.recent_blocks.lock().unwrap();
+        m.retain(|_, t| t.elapsed() < std::time::Duration::from_secs(10));
+        let key = path.to_lowercase();
+        if m.contains_key(&key) {
+            return false;
+        }
+        m.insert(key, std::time::Instant::now());
+        true
+    }
+
+    /// `true` se la protezione è sospesa (riprende da sola alla scadenza).
+    pub fn is_paused(&self) -> bool {
+        let until = self.paused_until.load(Ordering::SeqCst);
+        if until == 0 {
+            return false;
+        }
+        if until != PAUSED_UNTIL_RESTART && now() >= until {
+            self.paused_until.store(0, Ordering::SeqCst);
+            println!("protezione ripresa automaticamente");
+            return false;
+        }
+        true
+    }
+
+    pub fn pause(&self, seconds: Option<u64>) {
+        let until = match seconds {
+            Some(s) => now().saturating_add(s.clamp(60, 24 * 3600)),
+            None => PAUSED_UNTIL_RESTART,
+        };
+        self.paused_until.store(until, Ordering::SeqCst);
+        println!("protezione sospesa ({seconds:?} s)");
+    }
+
+    pub fn resume(&self) {
+        self.paused_until.store(0, Ordering::SeqCst);
+        println!("protezione ripresa");
+    }
+
+    pub fn is_excluded(&self, path: &std::path::Path) -> bool {
+        self.exclusions.read().unwrap().is_excluded(path, false)
+    }
+
+    pub fn add_exclusion(&self, path: String) -> Result<(), String> {
+        let mut ex = self.exclusions.write().unwrap();
+        if !ex.paths.iter().any(|p| p.eq_ignore_ascii_case(&path)) {
+            ex.paths.push(path);
+        }
+        let json = serde_json::to_string_pretty(&*ex).map_err(|e| e.to_string())?;
+        std::fs::write(self.config.data_dir.join("rtd-exclusions.json"), json).map_err(|e| e.to_string())
+    }
+
     pub fn status(&self) -> RtStatus {
+        let _ = self.is_paused(); // aggiorna la scadenza
         let info = self.engine().info().clone();
         RtStatus {
             version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -137,8 +201,17 @@ impl Shared {
             hash_signatures: info.hash_signatures,
             stats: self.stats.lock().unwrap().clone(),
             last_event_id: self.next_id.load(Ordering::SeqCst) - 1,
+            paused_until: self.paused_until.load(Ordering::SeqCst),
+            exclusions: self.exclusions.read().unwrap().paths.len(),
         }
     }
+}
+
+fn load_exclusions(dir: &std::path::Path) -> Exclusions {
+    std::fs::read_to_string(dir.join("rtd-exclusions.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -172,5 +245,29 @@ mod tests {
         assert_eq!(s.status().last_event_id, 5);
         let log = std::fs::read_to_string(d.path().join("data").join("rtd-events.jsonl")).unwrap();
         assert_eq!(log.lines().count(), 5);
+    }
+
+    #[test]
+    fn pause_resume_and_exclusions() {
+        let (_d, s) = shared();
+        assert!(!s.is_paused());
+        s.pause(Some(300));
+        assert!(s.is_paused());
+        assert!(s.status().paused_until > now());
+        s.resume();
+        assert!(!s.is_paused());
+        s.pause(None);
+        assert_eq!(s.status().paused_until, PAUSED_UNTIL_RESTART);
+        // Scadenza passata: riprende da sola.
+        s.paused_until.store(now() - 1, Ordering::SeqCst);
+        assert!(!s.is_paused());
+
+        assert!(s.should_report_block(r"C:\a.exe"));
+        assert!(!s.should_report_block(r"c:\A.EXE"), "secondo tentativo ravvicinato: niente nuovo evento");
+        assert!(s.should_report_block(r"C:\b.exe"));
+
+        s.add_exclusion(r"C:\Strumenti".into()).unwrap();
+        assert!(s.is_excluded(std::path::Path::new(r"C:\Strumenti\tool.exe")));
+        assert_eq!(load_exclusions(&s.config.data_dir).paths.len(), 1, "salvata su disco");
     }
 }

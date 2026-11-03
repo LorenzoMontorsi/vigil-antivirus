@@ -6,6 +6,9 @@
 //!   vigil-rtd install [opzioni]    registra e avvia il servizio VigilRtd (amministratore)
 //!   vigil-rtd uninstall            ferma e rimuove il servizio (amministratore)
 //!   vigil-rtd status               interroga il servizio tramite la pipe
+//!   vigil-rtd pause <minuti|riavvio>  sospende la protezione (amministratore)
+//!   vigil-rtd resume               riprende la protezione
+//!   vigil-rtd exclude <percorso>   esclude un file/cartella (amministratore)
 //!
 //! Opzioni:
 //!   --sigs <cartella>       cartella di firme (ripetibile)
@@ -77,16 +80,34 @@ pub fn start_protection(opts: Options) -> Result<Arc<Shared>, String> {
 }
 
 #[cfg(windows)]
-fn client_status() -> Result<(), String> {
+fn ask(req: &vigil_engine::rtproto::Request) -> Result<vigil_engine::rtproto::Response, String> {
     use std::io::{BufRead, BufReader, Write};
-    use vigil_engine::rtproto::{PIPE_NAME, Request, Response};
-    let ask = |req: &Request| -> Result<Response, String> {
-        let mut f = std::fs::OpenOptions::new().read(true).write(true).open(PIPE_NAME).map_err(|e| format!("servizio non raggiungibile: {e}"))?;
-        writeln!(f, "{}", serde_json::to_string(req).unwrap()).map_err(|e| e.to_string())?;
-        let mut line = String::new();
-        BufReader::new(f).read_line(&mut line).map_err(|e| e.to_string())?;
-        serde_json::from_str(&line).map_err(|e| e.to_string())
-    };
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(vigil_engine::rtproto::PIPE_NAME)
+        .map_err(|e| format!("servizio non raggiungibile: {e}"))?;
+    writeln!(f, "{}", serde_json::to_string(req).unwrap()).map_err(|e| e.to_string())?;
+    let mut line = String::new();
+    BufReader::new(f).read_line(&mut line).map_err(|e| e.to_string())?;
+    serde_json::from_str(&line).map_err(|e| e.to_string())
+}
+
+/// Invia un comando; una risposta di errore diventa un errore (codice di uscita 1).
+#[cfg(windows)]
+fn command(req: vigil_engine::rtproto::Request) -> Result<(), String> {
+    match ask(&req)? {
+        vigil_engine::rtproto::Response::Error { message } => Err(message),
+        _ => {
+            println!("ok");
+            Ok(())
+        }
+    }
+}
+
+#[cfg(windows)]
+fn client_status() -> Result<(), String> {
+    use vigil_engine::rtproto::{Request, Response};
     println!("{}", serde_json::to_string_pretty(&ask(&Request::Status)?).unwrap());
     if let Response::Events { events } = ask(&Request::Events { after: 0, limit: 10 })? {
         for e in events {
@@ -109,11 +130,27 @@ fn main() {
         "install" => Options::parse(rest.clone().into_iter()).and_then(|_| service::install(rest)),
         "uninstall" => service::uninstall(),
         "status" => client_status(),
+        "pause" => parse_pause(rest.first().map(String::as_str))
+            .and_then(|seconds| command(vigil_engine::rtproto::Request::Pause { seconds })),
+        "resume" => command(vigil_engine::rtproto::Request::Resume),
+        "exclude" => match rest.first() {
+            Some(p) => command(vigil_engine::rtproto::Request::AddExclusion { path: p.clone() }),
+            None => Err("uso: vigil-rtd exclude <percorso>".into()),
+        },
         _ => Err("uso: vigil-rtd run|service|install|uninstall|status [opzioni]  (vedi l'intestazione di main.rs)".into()),
     };
     if let Err(e) = result {
         eprintln!("errore: {e}");
         std::process::exit(1);
+    }
+}
+
+/// "15" -> 15 minuti; "riavvio" -> fino al riavvio del servizio.
+fn parse_pause(arg: Option<&str>) -> Result<Option<u64>, String> {
+    match arg {
+        Some("riavvio") | Some("restart") => Ok(None),
+        Some(m) => m.parse::<u64>().map(|m| Some(m * 60)).map_err(|_| format!("minuti non validi: {m}")),
+        None => Err("uso: vigil-rtd pause <minuti|riavvio>".into()),
     }
 }
 

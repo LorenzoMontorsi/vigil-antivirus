@@ -83,6 +83,8 @@ const rtStatus = {
     hash_signatures: 923,
     stats: { exec_checked: 18342, exec_blocked: 2, exec_cached: 17110, writes_checked: 4210, threats_found: 3, quarantined: 1 },
     last_event_id: 3,
+    paused_until: 0,
+    exclusions: 0,
   },
 };
 const rtEvents = [
@@ -90,6 +92,30 @@ const rtEvents = [
   { id: 2, time: Math.floor(Date.now() / 1000) - 1800, kind: "quarantined", path: "C:\\Users\\demo\\Downloads\\fattura.zip", threat: "MalwareBazaar.AgentTesla", process: "C:\\Program Files\\Mozilla Firefox\\firefox.exe", detail: null },
   { id: 3, time: Math.floor(Date.now() / 1000) - 120, kind: "blocked", path: "C:\\Vigil\\prova\\marcato.exe", threat: "Vigil_Test_Quarantena", process: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", detail: null },
 ];
+
+function demoToast(id: number) {
+  const base = { id, realtime: false, process: null, message: null };
+  return id === 2
+    ? {
+        ...base,
+        tone: "warn",
+        title: "File sospetto rilevato",
+        threat: "Sospetto (euristica)",
+        path: "C:\\Users\\demo\\Desktop\\Fattura_2026.pdf.exe",
+        message: "Doppia estensione ingannevole (.pdf.exe)",
+        actions: ["quarantine", "delete", "exclude", "ignore"],
+      }
+    : {
+        ...base,
+        tone: "danger",
+        realtime: true,
+        title: "Minaccia bloccata",
+        threat: "Win.Trojan.Agent-1234567",
+        path: "C:\\Users\\demo\\Downloads\\keygen.exe",
+        process: "C:\\Windows\\explorer.exe",
+        actions: ["quarantine", "delete", "exclude", "ignore"],
+      };
+}
 
 export function installDevMock() {
   const w = window as unknown as Record<string, unknown>;
@@ -115,6 +141,10 @@ export function installDevMock() {
           return status;
         case "get_settings":
           return settings;
+        case "toast_get":
+          return demoToast(Number(args.id));
+        case "toast_action":
+          return args.action === "quarantine" ? "Messo in quarantena" : "Fatto";
         case "rt_status":
           return rtDemo ? rtStatus : { installed: false, running: false, status: null };
         case "rt_events":

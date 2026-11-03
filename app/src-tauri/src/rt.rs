@@ -15,7 +15,6 @@ use std::{
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_notification::NotificationExt;
 use vigil_engine::rtproto::{PIPE_NAME, Request, Response, RtEvent, RtEventKind, RtStatus, SERVICE_NAME};
 
 const MAX_UI_EVENTS: usize = 100;
@@ -81,15 +80,49 @@ fn service_state() -> (bool, bool) {
     (false, false)
 }
 
+/// Avviso a popup per un evento del servizio, con le azioni possibili.
 fn notify(app: &AppHandle, ev: &RtEvent) {
-    let file = ev.path.rsplit(['\\', '/']).next().unwrap_or(&ev.path);
-    let (title, body) = match ev.kind {
-        RtEventKind::Blocked => ("Minaccia bloccata", format!("{file} non è stato eseguito ({})", ev.threat)),
-        RtEventKind::Quarantined => ("Minaccia messa in quarantena", format!("{file} ({})", ev.threat)),
-        RtEventKind::Detected => ("Minaccia rilevata", format!("{file} ({})", ev.threat)),
-        RtEventKind::QuarantineFailed => ("Minaccia non isolata", format!("{file}: {}", ev.detail.as_deref().unwrap_or("errore"))),
+    use crate::toast::{Action::*, Tone, ToastData};
+    let (tone, title, actions) = match ev.kind {
+        RtEventKind::Blocked => (Tone::Danger, "Minaccia bloccata", vec![Quarantine, Delete, Exclude, Ignore]),
+        RtEventKind::Detected => (Tone::Danger, "Minaccia rilevata", vec![Quarantine, Delete, Exclude, Ignore]),
+        RtEventKind::Quarantined => (Tone::Ok, "Minaccia messa in quarantena", vec![Open, Close]),
+        RtEventKind::QuarantineFailed => (Tone::Warn, "Minaccia non isolata", vec![Delete, Exclude, Ignore]),
     };
-    let _ = app.notification().builder().title(title).body(body).show();
+    crate::toast::show(
+        app,
+        ToastData {
+            tone,
+            title: title.into(),
+            threat: Some(ev.threat.clone()),
+            path: Some(ev.path.clone()),
+            process: ev.process.clone(),
+            message: ev.detail.clone(),
+            actions,
+            realtime: true,
+            source: "realtime".into(),
+            ..Default::default()
+        },
+    );
+}
+
+fn notify_pause_change(app: &AppHandle, before: u64, after: u64) {
+    use crate::toast::{Tone, ToastData};
+    let (tone, title, message) = match (before, after) {
+        (0, x) if x > 0 => (
+            Tone::Warn,
+            "Protezione sospesa",
+            if x == vigil_engine::rtproto::PAUSED_UNTIL_RESTART {
+                "Fino al riavvio del servizio. Puoi riprenderla dal menu dell'icona.".to_owned()
+            } else {
+                let min = x.saturating_sub(crate::util::now_unix()).div_ceil(60);
+                format!("Riprenderà da sola tra {min} minuti. Puoi riprenderla prima dal menu dell'icona.")
+            },
+        ),
+        (b, 0) if b > 0 => (Tone::Ok, "Protezione ripresa", "Vigil sta di nuovo controllando programmi e file.".to_owned()),
+        _ => return,
+    };
+    crate::toast::show(app, ToastData { tone, title: title.into(), message: Some(message), auto_close_secs: Some(8), ..Default::default() });
 }
 
 fn poll_once(app: &AppHandle) {
@@ -104,7 +137,11 @@ fn poll_once(app: &AppHandle) {
         None
     };
 
+    let paused_before = rt.ui.lock().unwrap().status.as_ref().map_or(0, |s| s.paused_until);
     if let Some(s) = &status {
+        if rt.primed.load(Ordering::SeqCst) {
+            notify_pause_change(app, paused_before, s.paused_until);
+        }
         let mut last = rt.last_seen.load(Ordering::SeqCst);
         if s.last_event_id < last {
             // Il servizio è ripartito: gli id ricominciano da capo.
@@ -132,6 +169,7 @@ fn poll_once(app: &AppHandle) {
     rt.primed.store(true, Ordering::SeqCst);
 
     let ui = RtUiStatus { installed, running, status };
+    crate::tray::update(app, &ui);
     let changed = {
         let mut cur = rt.ui.lock().unwrap();
         let changed = serde_json::to_string(&*cur).ok() != serde_json::to_string(&ui).ok();
@@ -152,31 +190,70 @@ pub fn spawn_poller(app: AppHandle) {
     });
 }
 
-/// Avvia o ferma il servizio con i privilegi di amministratore (chiede conferma UAC).
+/// Esegue un programma con i privilegi di amministratore (prompt UAC), senza finestra.
 #[cfg(windows)]
-pub fn set_enabled(enabled: bool) -> Result<(), String> {
+fn run_as_admin(file: &str, args: &str) -> Result<(), String> {
     use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_HIDE};
     let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
-    let args = format!("{} {SERVICE_NAME}", if enabled { "start" } else { "stop" });
     let r = unsafe {
-        ShellExecuteW(
-            std::ptr::null_mut(),
-            wide("runas").as_ptr(),
-            wide("sc.exe").as_ptr(),
-            wide(&args).as_ptr(),
-            std::ptr::null(),
-            SW_HIDE,
-        )
+        ShellExecuteW(std::ptr::null_mut(), wide("runas").as_ptr(), wide(file).as_ptr(), wide(args).as_ptr(), std::ptr::null(), SW_HIDE)
     } as isize;
     // Valori <= 32 sono errori; 5 = accesso negato (UAC annullato).
     match r {
         r if r > 32 => Ok(()),
         5 => Err("Operazione annullata: serve l'autorizzazione di amministratore.".into()),
-        r => Err(format!("Impossibile cambiare lo stato del servizio (codice {r}).")),
+        r => Err(format!("Impossibile eseguire l'operazione (codice {r}).")),
     }
 }
 
 #[cfg(not(windows))]
-pub fn set_enabled(_enabled: bool) -> Result<(), String> {
+fn run_as_admin(_file: &str, _args: &str) -> Result<(), String> {
     Err("solo su Windows".into())
+}
+
+/// Percorso di vigil-rtd.exe, letto dalla configurazione del servizio.
+#[cfg(windows)]
+fn service_exe() -> Result<String, String> {
+    use windows_service::{
+        service::ServiceAccess,
+        service_manager::{ServiceManager, ServiceManagerAccess},
+    };
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT).map_err(|e| e.to_string())?;
+    let service = manager
+        .open_service(SERVICE_NAME, ServiceAccess::QUERY_CONFIG)
+        .map_err(|_| "La protezione in tempo reale non è installata.".to_string())?;
+    let cfg = service.query_config().map_err(|e| e.to_string())?;
+    Ok(cfg.executable_path.display().to_string())
+}
+
+#[cfg(not(windows))]
+fn service_exe() -> Result<String, String> {
+    Err("solo su Windows".into())
+}
+
+/// Avvia o ferma il servizio (UAC).
+pub fn set_enabled(enabled: bool) -> Result<(), String> {
+    run_as_admin("sc.exe", &format!("{} {SERVICE_NAME}", if enabled { "start" } else { "stop" }))
+}
+
+/// Sospende la protezione per `minutes` minuti, o fino al riavvio se `None` (UAC).
+pub fn pause(minutes: Option<u64>) -> Result<(), String> {
+    let arg = minutes.map(|m| m.to_string()).unwrap_or_else(|| "riavvio".into());
+    run_as_admin(&service_exe()?, &format!("pause {arg}"))
+}
+
+/// Riprende la protezione: non servono privilegi.
+pub fn resume() -> Result<(), String> {
+    match query(&Request::Resume)? {
+        Response::Error { message } => Err(message),
+        _ => Ok(()),
+    }
+}
+
+/// Esclude un percorso dalla protezione in tempo reale (UAC).
+pub fn exclude(path: &str) -> Result<(), String> {
+    if path.contains('"') {
+        return Err("percorso non valido".into());
+    }
+    run_as_admin(&service_exe()?, &format!("exclude \"{path}\""))
 }

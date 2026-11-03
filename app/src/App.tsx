@@ -1,4 +1,5 @@
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 import { useScan } from "./useScan";
 import { useStatus } from "./useStatus";
@@ -27,6 +28,21 @@ export default function App() {
   const scan = useScan();
   const status = useStatus();
   const rt = useRealtime();
+
+  // Comandi dal menu dell'icona nell'area di notifica e dagli avvisi a popup.
+  const { start } = scan;
+  useEffect(() => {
+    const uns = [
+      listen("tray://quick-scan", () => {
+        setPage("scan");
+        start("quick");
+      }),
+      listen<Page>("tray://open-page", (e) => setPage(e.payload)),
+    ];
+    return () => {
+      uns.forEach((p) => p.then((un) => un()));
+    };
+  }, [start]);
   const running = scan.state.status === "running";
 
   return (

@@ -206,6 +206,9 @@ export interface RtStatus {
   hash_signatures: number;
   stats: RtStats;
   last_event_id: number;
+  /** 0 = attiva; altrimenti istante unix di ripresa (o il massimo u64 = fino al riavvio). */
+  paused_until: number;
+  exclusions: number;
 }
 
 export type RtEventKind = "blocked" | "quarantined" | "detected" | "quarantine_failed";
@@ -227,11 +230,12 @@ export interface RtUiStatus {
 }
 
 /** Stato sintetico per l'interfaccia. */
-export type RtState = "not_installed" | "stopped" | "starting" | "active";
+export type RtState = "not_installed" | "stopped" | "starting" | "active" | "paused";
 
 export function rtState(s: RtUiStatus | null): RtState {
   if (!s || !s.installed) return "not_installed";
   if (!s.running) return "stopped";
+  if (s.status && s.status.paused_until > 0) return "paused";
   return s.status?.driver_connected ? "active" : "starting";
 }
 
@@ -239,4 +243,6 @@ export const rtApi = {
   status: () => invoke<RtUiStatus>("rt_status"),
   events: () => invoke<RtEvent[]>("rt_events"),
   setEnabled: (enabled: boolean) => invoke<void>("rt_set_enabled", { enabled }),
+  pause: (minutes: number | null) => invoke<void>("rt_pause", { minutes }),
+  resume: () => invoke<void>("rt_resume"),
 };

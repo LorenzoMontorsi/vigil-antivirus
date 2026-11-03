@@ -19,7 +19,17 @@ pub enum Request {
     Events { after: u64, limit: usize },
     /// Ricarica le firme dal disco (dopo un aggiornamento).
     Reload,
+    /// Sospende la protezione per `seconds` secondi, o fino al riavvio del servizio
+    /// se `None`. Accettata SOLO da un client con privilegi di amministratore.
+    Pause { seconds: Option<u64> },
+    /// Riprende la protezione (accettata da chiunque: riattivare è sempre sicuro).
+    Resume,
+    /// Esclude un file o una cartella dalla protezione. SOLO amministratore.
+    AddExclusion { path: String },
 }
+
+/// `RtStatus::paused_until` quando la sospensione dura fino al riavvio del servizio.
+pub const PAUSED_UNTIL_RESTART: u64 = u64::MAX;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RtStats {
@@ -42,6 +52,12 @@ pub struct RtStatus {
     pub hash_signatures: usize,
     pub stats: RtStats,
     pub last_event_id: u64,
+    /// 0 = protezione attiva; altrimenti istante (unix) di ripresa automatica,
+    /// oppure `PAUSED_UNTIL_RESTART`.
+    #[serde(default)]
+    pub paused_until: u64,
+    #[serde(default)]
+    pub exclusions: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,6 +105,10 @@ mod tests {
             serde_json::from_str::<Request>(r#"{"cmd":"events","after":7,"limit":20}"#).unwrap(),
             Request::Events { after: 7, limit: 20 }
         );
+        assert_eq!(
+            serde_json::to_string(&Request::Pause { seconds: Some(300) }).unwrap(),
+            r#"{"cmd":"pause","seconds":300}"#
+        );
         let r = Response::Error { message: "x".into() };
         let back: Response = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
         assert_eq!(back, r);
@@ -101,6 +121,8 @@ mod tests {
             hash_signatures: 3,
             stats: RtStats::default(),
             last_event_id: 0,
+            paused_until: 0,
+            exclusions: 0,
         });
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.starts_with(r#"{"type":"status","version":"0.1.0""#), "{json}");

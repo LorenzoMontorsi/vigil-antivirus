@@ -1,6 +1,8 @@
 mod clamav;
 mod feeds;
 mod rt;
+mod toast;
+mod tray;
 mod settings;
 mod util;
 
@@ -249,6 +251,40 @@ fn run_update_bg(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn toast_for_detection(app: &AppHandle, r: &vigil_engine::ScanResult) {
+    use toast::{Action::*, Tone, ToastData};
+    let (tone, title, threat, source, message) = match &r.verdict {
+        vigil_engine::Verdict::Infected { threat, source, location, .. } => (
+            Tone::Danger,
+            "Minaccia rilevata",
+            threat.clone(),
+            serde_json::to_value(source).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default(),
+            location.as_ref().map(|l| format!("dentro l'archivio: {l}")),
+        ),
+        vigil_engine::Verdict::Suspicious { reasons, .. } => (
+            Tone::Warn,
+            "File sospetto rilevato",
+            "Sospetto (euristica)".to_owned(),
+            "heuristics".to_owned(),
+            reasons.first().cloned(),
+        ),
+        _ => return,
+    };
+    toast::show(
+        app,
+        ToastData {
+            tone,
+            title: title.into(),
+            threat: Some(threat),
+            path: Some(r.path.display().to_string()),
+            message,
+            actions: vec![Quarantine, Delete, Exclude, Ignore],
+            source,
+            ..Default::default()
+        },
+    );
+}
+
 fn quick_scan_roots() -> Vec<PathBuf> {
     let env = |k: &str| std::env::var_os(k).map(PathBuf::from);
     let mut roots = Vec::new();
@@ -375,6 +411,16 @@ fn rt_events(rt: State<'_, rt::Realtime>) -> Vec<vigil_engine::rtproto::RtEvent>
 #[tauri::command]
 fn rt_set_enabled(enabled: bool) -> Result<(), String> {
     rt::set_enabled(enabled)
+}
+
+#[tauri::command]
+fn rt_pause(minutes: Option<u64>) -> Result<(), String> {
+    rt::pause(minutes)
+}
+
+#[tauri::command]
+fn rt_resume() -> Result<(), String> {
+    rt::resume()
 }
 
 #[tauri::command]
@@ -536,16 +582,20 @@ fn start_scan(
         let state = app.state::<AppState>();
         let mut last_progress: Option<Instant> = None;
         let mut quarantined_any = false;
+        let mut toasts_shown = 0usize;
+        let mut pending_detections = 0usize;
         let summary = engine.scan_paths(&roots, &opts, &cancel, |r, s| {
             if r.is_detection() {
                 let _ = app.emit("scan://threat", r);
             }
             // Quarantena automatica: solo minacce certe, mai i sospetti dell'euristica.
+            let mut handled = false;
             if auto_quarantine {
                 if let vigil_engine::Verdict::Infected { threat, source, .. } = &r.verdict {
                     let source = serde_json::to_value(source).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default();
                     let res = state.quarantine.add(&r.path, threat, &source);
                     quarantined_any |= res.is_ok();
+                    handled = res.is_ok();
                     let _ = app.emit(
                         "scan://handled",
                         HandledPayload {
@@ -556,12 +606,33 @@ fn start_scan(
                     );
                 }
             }
+            // Avviso a popup per ciò che resta da decidere (al massimo 3 per scansione).
+            if r.is_detection() && !handled {
+                if toasts_shown < 3 {
+                    toasts_shown += 1;
+                    toast_for_detection(&app, r);
+                } else {
+                    pending_detections += 1;
+                }
+            }
             if last_progress.is_none_or(|t| t.elapsed() >= Duration::from_millis(100)) {
                 last_progress = Some(Instant::now());
                 let _ = app.emit("scan://progress", ProgressPayload { summary: s, current: r.path.display().to_string() });
             }
         });
         state.scan_cancel.lock().unwrap().take();
+        if pending_detections > 0 {
+            toast::show(
+                &app,
+                toast::ToastData {
+                    tone: toast::Tone::Warn,
+                    title: format!("Altri {pending_detections} rilevamenti da controllare"),
+                    message: Some("Aprili dalla pagina Scansione per decidere cosa farne.".into()),
+                    actions: vec![toast::Action::Open, toast::Action::Close],
+                    ..Default::default()
+                },
+            );
+        }
         if quarantined_any {
             let _ = app.emit("quarantine://changed", ());
         }
@@ -580,6 +651,8 @@ fn cancel_scan(state: State<'_, AppState>) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Una sola istanza: rilanciare Vigil riapre la finestra esistente.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| toast::show_main(app)))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -622,7 +695,20 @@ pub fn run() {
             });
 
             app.manage(rt::Realtime::default());
+            app.manage(toast::Toasts::default());
+            tray::init(app.handle())?;
             rt::spawn_poller(app.handle().clone());
+
+            // Chiudere la finestra la nasconde: Vigil resta attivo nell'area di notifica.
+            if let Some(main) = app.get_webview_window("main") {
+                let w = main.clone();
+                main.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = w.hide();
+                    }
+                });
+            }
 
             let handle = app.handle();
             if needs_update {
@@ -653,6 +739,11 @@ pub fn run() {
             rt_status,
             rt_events,
             rt_set_enabled,
+            rt_pause,
+            rt_resume,
+            toast::toast_get,
+            toast::toast_action,
+            toast::toast_close,
         ])
         .build(tauri::generate_context!())
         .expect("errore durante l'avvio di Vigil")

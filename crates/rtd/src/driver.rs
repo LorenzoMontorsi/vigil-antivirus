@@ -251,6 +251,9 @@ fn exec_worker(shared: &Shared, port: &Handle, iocp: &Handle, devices: &[(String
 
 /// `true` se l'esecuzione va bloccata.
 fn check_execute(shared: &Shared, path: &Path, pid: u32) -> bool {
+    if shared.is_paused() || shared.is_excluded(path) {
+        return false;
+    }
     let engine = shared.engine();
     let cache = shared.cache();
     let opts = ScanOptions { heuristics: false, scan_archives: false, trust_microsoft: true, cache: Some(cache), ..Default::default() };
@@ -262,10 +265,14 @@ fn check_execute(shared: &Shared, path: &Path, pid: u32) -> bool {
     }
     if let Verdict::Infected { threat, .. } = &r.verdict {
         stats.exec_blocked += 1;
-        stats.threats_found += 1;
         drop(stats);
-        println!("BLOCCATO  {}  [{threat}]", path.display());
-        shared.push_event(RtEventKind::Blocked, path.display().to_string(), threat.clone(), process_image(pid), None);
+        let shown = path.display().to_string();
+        // Si blocca sempre; l'evento (e quindi l'avviso) si registra una volta sola.
+        if shared.should_report_block(&shown) {
+            shared.stats.lock().unwrap().threats_found += 1;
+            println!("BLOCCATO  {shown}  [{threat}]");
+            shared.push_event(RtEventKind::Blocked, shown, threat.clone(), process_image(pid), None);
+        }
         return true;
     }
     false
@@ -283,6 +290,9 @@ fn write_worker(shared: &Shared, rx: Receiver<(PathBuf, u32)>) {
             continue;
         }
         recent.insert(path.clone(), Instant::now());
+        if shared.is_paused() || shared.is_excluded(&path) {
+            continue;
+        }
         // Il file sta finendo di chiudersi: un attimo di pazienza prima di leggerlo.
         std::thread::sleep(Duration::from_millis(300));
 

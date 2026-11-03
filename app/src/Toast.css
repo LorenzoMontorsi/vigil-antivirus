@@ -1,0 +1,198 @@
+/* Finestra di avviso a popup: occupa tutta la piccola finestra senza bordi. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #0e1020;
+}
+
+.toast {
+  --c1: #8b5cf6;
+  --c2: #22d3ee;
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px 14px 20px;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  color: #eef0fb;
+  background:
+    linear-gradient(115deg, color-mix(in srgb, var(--c1) 16%, transparent), transparent 60%),
+    #12152a;
+  border: 1px solid color-mix(in srgb, var(--c1) 45%, rgba(255, 255, 255, 0.1));
+  user-select: none;
+  overflow: hidden;
+}
+.toast-danger {
+  --c1: #fb4b6e;
+  --c2: #e04fd8;
+}
+.toast-warn {
+  --c1: #fbbf24;
+  --c2: #fb7c3c;
+}
+.toast-ok {
+  --c1: #22d3ee;
+  --c2: #34e0a1;
+}
+.toast-stripe {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
+  background: linear-gradient(180deg, var(--c1), var(--c2));
+}
+.toast-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.toast-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--c1), var(--c2));
+  color: #0a0b14;
+  flex: none;
+}
+.toast-titles {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.toast-brand {
+  font-size: 11px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: #a4a9c8;
+}
+.toast-titles strong {
+  font-family: "Space Grotesk Variable", "Segoe UI", sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+}
+.toast-x {
+  border: 0;
+  background: none;
+  color: #6c7194;
+  cursor: pointer;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  align-self: flex-start;
+}
+.toast-x:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #eef0fb;
+}
+.toast-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 0;
+  flex: 1;
+}
+.toast-threat {
+  color: var(--c1);
+  font-weight: 700;
+  font-family: "Space Grotesk Variable", "Segoe UI", sans-serif;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toast-file {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.toast-file strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toast-path,
+.toast-sub {
+  font-size: 11.5px;
+  color: #8b90b0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toast-path {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  direction: rtl;
+  text-align: left;
+}
+.toast-ok {
+  color: #34e0a1;
+  font-weight: 600;
+}
+.toast-err {
+  color: #fb4b6e;
+  font-weight: 600;
+  font-size: 12px;
+}
+.toast-actions {
+  display: flex;
+  gap: 6px;
+}
+.tbtn {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 7px 4px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: #eef0fb;
+  font: inherit;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Il pulsante principale (con icona) prende un po' più spazio. */
+.tbtn-primary {
+  flex-grow: 1.25;
+}
+.tbtn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+.tbtn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.tbtn-primary {
+  background: linear-gradient(120deg, var(--c1), var(--c2));
+  border-color: transparent;
+  color: #0a0b14;
+}
+.tbtn-primary:hover:not(:disabled) {
+  background: linear-gradient(120deg, var(--c1), var(--c2));
+  filter: brightness(1.08);
+}
+.tbtn-danger:not(.tbtn-primary) {
+  color: #fb4b6e;
+  border-color: color-mix(in srgb, #fb4b6e 40%, transparent);
+}
+.tbtn:focus-visible,
+.toast-x:focus-visible {
+  outline: 2px solid #22d3ee;
+  outline-offset: 1px;
+}

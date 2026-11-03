@@ -312,9 +312,9 @@ function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; title
 function RealtimeSection({ rt }: { rt: RealtimeController }) {
   const state = rtState(rt.status);
   const st = rt.status?.status;
-  const label = { not_installed: "Non installata", stopped: "Disattivata", starting: "Avvio…", active: "Attiva" }[state];
-  const pill = { not_installed: "pill-off", stopped: "pill-warn", starting: "pill-busy", active: "pill-on" }[state];
-  const on = state === "active" || state === "starting";
+  const label = { not_installed: "Non installata", stopped: "Disattivata", starting: "Avvio…", active: "Attiva", paused: "Sospesa" }[state];
+  const pill = { not_installed: "pill-off", stopped: "pill-warn", starting: "pill-busy", active: "pill-on", paused: "pill-warn" }[state];
+  const on = state === "active" || state === "starting" || state === "paused";
   return (
     <section className="card">
       <div className="card-title-row">
