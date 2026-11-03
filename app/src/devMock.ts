@@ -75,6 +75,7 @@ const rtDemo = new URLSearchParams(location.search).get("rt") === "on";
 const rtStatus = {
   installed: true,
   running: true,
+  amsi_installed: true,
   status: {
     version: "0.1.0",
     driver_connected: true,
@@ -82,7 +83,7 @@ const rtStatus = {
     auto_quarantine: true,
     yara_rules: 5136,
     hash_signatures: 923,
-    stats: { exec_checked: 18342, exec_blocked: 2, exec_cached: 17110, writes_checked: 4210, threats_found: 3, quarantined: 1 },
+    stats: { scripts_checked: 912, scripts_blocked: 1, exec_checked: 18342, exec_blocked: 2, exec_cached: 17110, writes_checked: 4210, threats_found: 3, quarantined: 1 },
     last_event_id: 3,
     paused_until: 0,
     exclusions: 0,
@@ -147,7 +148,7 @@ export function installDevMock() {
         case "toast_action":
           return args.action === "quarantine" ? "Messo in quarantena" : "Fatto";
         case "rt_status":
-          return rtDemo ? rtStatus : { installed: false, running: false, status: null };
+          return rtDemo ? rtStatus : { installed: false, running: false, status: null, amsi_installed: false };
         case "rt_vault_list":
           return rtDemo ? [vault[0]] : [];
         case "rt_events":

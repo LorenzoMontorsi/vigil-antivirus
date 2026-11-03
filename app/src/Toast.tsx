@@ -76,7 +76,7 @@ export default function ToastView({ id }: { id: number }) {
         {file && (
           <div className="toast-file" title={data.path ?? ""}>
             <strong>{file}</strong>
-            <span className="toast-path">{data.path}</span>
+            {/[\\/]/.test(data.path ?? "") && <span className="toast-path">{data.path}</span>}
           </div>
         )}
         {data.process && <div className="toast-sub">da {data.process.split(/[\\/]/).pop()}</div>}

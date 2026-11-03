@@ -3,7 +3,9 @@
 #  2. un file marcato appena scritto deve finire in quarantena da solo.
 $ErrorActionPreference = 'Continue'
 $dir = 'C:\Vigil\prova'
-$marker = 'VIGIL-TEST-QUARANTENA-7f3a'
+# Composto a pezzi: lo script stesso non deve contenere il marcatore in chiaro,
+# altrimenti con la protezione AMSI attiva verrebbe bloccato lui.
+$marker = 'VIGIL-TEST-' + 'QUARANTENA-' + '7f3a'
 New-Item -ItemType Directory -Force $dir | Out-Null
 Remove-Item "$dir\*" -Force -ErrorAction SilentlyContinue
 

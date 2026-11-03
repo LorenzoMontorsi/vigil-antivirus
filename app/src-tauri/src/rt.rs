@@ -27,6 +27,28 @@ pub struct RtUiStatus {
     pub running: bool,
     /// Stato riportato dal servizio (se raggiungibile).
     pub status: Option<RtStatus>,
+    /// Il provider AMSI di Vigil è registrato in Windows.
+    pub amsi_installed: bool,
+}
+
+/// CLSID del provider AMSI (vedi crates/amsi).
+const AMSI_PROVIDER_KEY: &str = r"SOFTWARE\Microsoft\AMSI\Providers\{2B9E6E0B-5D1A-4C51-9E3B-7A1D2C4F8E61}";
+
+#[cfg(windows)]
+fn amsi_installed() -> bool {
+    use windows_sys::Win32::System::Registry::{HKEY, HKEY_LOCAL_MACHINE, KEY_READ, RegCloseKey, RegOpenKeyExW};
+    let wide: Vec<u16> = AMSI_PROVIDER_KEY.encode_utf16().chain(Some(0)).collect();
+    let mut key: HKEY = std::ptr::null_mut();
+    let ok = unsafe { RegOpenKeyExW(HKEY_LOCAL_MACHINE, wide.as_ptr(), 0, KEY_READ, &mut key) } == 0;
+    if ok {
+        unsafe { RegCloseKey(key) };
+    }
+    ok
+}
+
+#[cfg(not(windows))]
+fn amsi_installed() -> bool {
+    false
 }
 
 #[derive(Default)]
@@ -88,6 +110,11 @@ fn notify(app: &AppHandle, ev: &RtEvent) {
         RtEventKind::Detected => (Tone::Danger, "Minaccia rilevata", vec![Quarantine, Delete, Exclude, Ignore]),
         RtEventKind::Quarantined => (Tone::Ok, "Minaccia messa in quarantena", vec![Open, Close]),
         RtEventKind::QuarantineFailed => (Tone::Warn, "Minaccia non isolata", vec![Delete, Exclude, Ignore]),
+        // Uno script vive in memoria: se viene da un file su disco si può isolare quello.
+        RtEventKind::ScriptBlocked if std::path::Path::new(&ev.path).is_file() => {
+            (Tone::Danger, "Script dannoso bloccato", vec![Quarantine, Delete, Ignore])
+        }
+        RtEventKind::ScriptBlocked => (Tone::Danger, "Script dannoso bloccato", vec![Close]),
     };
     crate::toast::show(
         app,
@@ -168,7 +195,7 @@ fn poll_once(app: &AppHandle) {
     }
     rt.primed.store(true, Ordering::SeqCst);
 
-    let ui = RtUiStatus { installed, running, status };
+    let ui = RtUiStatus { installed, running, status, amsi_installed: amsi_installed() };
     crate::tray::update(app, &ui);
     let changed = {
         let mut cur = rt.ui.lock().unwrap();

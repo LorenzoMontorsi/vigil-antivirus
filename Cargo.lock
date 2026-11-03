@@ -5945,6 +5945,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vigil-amsi"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "serde_json",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
 name = "vigil-engine"
 version = "0.1.0"
 dependencies = [
@@ -5966,6 +5976,7 @@ dependencies = [
 name = "vigil-rtd"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "crossbeam-channel",
  "serde_json",
  "tempfile",

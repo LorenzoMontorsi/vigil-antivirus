@@ -23,7 +23,7 @@ use windows_sys::Win32::{
     System::Threading::{GetCurrentThread, OpenThreadToken},
     Storage::FileSystem::PIPE_ACCESS_DUPLEX,
     System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeW, ImpersonateNamedPipeClient, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
+        ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, ImpersonateNamedPipeClient, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
         PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
     },
 };
@@ -32,14 +32,16 @@ use crate::state::Shared;
 
 /// SYSTEM e Amministratori: tutto. Utenti interattivi: lettura e scrittura.
 const PIPE_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)";
-const MAX_REQUEST: u64 = 4096;
+/// Le richieste di AMSI portano il contenuto dello script (fino a 4 MB, in base64).
+const MAX_REQUEST: u64 = 6 * 1024 * 1024;
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
 
 /// `admin`: il client ha un token di amministratore elevato (verificato impersonandolo).
-pub fn handle_request(shared: &Shared, req: Request, admin: bool) -> Response {
+/// `client_pid`: processo all'altro capo della pipe (per AMSI è chi esegue lo script).
+pub fn handle_request(shared: &Shared, req: Request, admin: bool, client_pid: u32) -> Response {
     let denied = || Response::Error {
         message: "operazione riservata agli amministratori: conferma la richiesta di Windows".into(),
     };
@@ -60,6 +62,16 @@ pub fn handle_request(shared: &Shared, req: Request, admin: bool) -> Response {
             }
             shared.pause(seconds);
             Response::Ok
+        }
+        Request::ScanBuffer { app, name, data } => {
+            use base64::Engine as _;
+            match base64::engine::general_purpose::STANDARD.decode(data.as_bytes()) {
+                Ok(bytes) => {
+                    let threat = crate::script::scan(shared, &app, &name, &bytes, client_pid);
+                    Response::Scan { detected: threat.is_some(), threat }
+                }
+                Err(_) => Response::Error { message: "contenuto non valido".into() },
+            }
         }
         Request::AddExclusion { path } => {
             if !admin {
@@ -145,7 +157,14 @@ pub fn serve(shared: Arc<Shared>) {
             let mut line = String::new();
             let resp = match reader.read_line(&mut line) {
                 Ok(_) => match serde_json::from_str::<Request>(line.trim()) {
-                    Ok(req) => handle_request(&shared, req, client_is_admin(file.as_raw_handle() as HANDLE)),
+                    Ok(req) => {
+                        let h = file.as_raw_handle() as HANDLE;
+                        let mut pid = 0u32;
+                        unsafe { GetNamedPipeClientProcessId(h, &mut pid) };
+                        // Il controllo dei privilegi serve solo ai comandi riservati.
+                        let admin = matches!(req, Request::Pause { .. } | Request::AddExclusion { .. }) && client_is_admin(h);
+                        handle_request(&shared, req, admin, pid)
+                    }
                     Err(e) => Response::Error { message: format!("richiesta non valida: {e}") },
                 },
                 Err(e) => Response::Error { message: e.to_string() },
@@ -187,7 +206,7 @@ mod tests {
             data_dir: d.path().to_path_buf(),
         })
         .unwrap();
-        match handle_request(&shared, Request::Status, false) {
+        match handle_request(&shared, Request::Status, false, 0) {
             Response::Status(s) => {
                 assert!(!s.driver_connected);
                 assert!(!s.auto_quarantine, "senza cartella di quarantena non può essere attiva");
@@ -195,16 +214,16 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!(handle_request(&shared, Request::Events { after: 0, limit: 10 }, false), Response::Events { events: vec![] });
+        assert_eq!(handle_request(&shared, Request::Events { after: 0, limit: 10 }, false, 0), Response::Events { events: vec![] });
         // Sospendere senza privilegi viene rifiutato, riprendere no.
-        assert!(matches!(handle_request(&shared, Request::Pause { seconds: Some(600) }, false), Response::Error { .. }));
+        assert!(matches!(handle_request(&shared, Request::Pause { seconds: Some(600) }, false, 0), Response::Error { .. }));
         assert!(!shared.is_paused());
-        assert_eq!(handle_request(&shared, Request::Pause { seconds: Some(600) }, true), Response::Ok);
+        assert_eq!(handle_request(&shared, Request::Pause { seconds: Some(600) }, true, 0), Response::Ok);
         assert!(shared.is_paused());
-        assert_eq!(handle_request(&shared, Request::Resume, false), Response::Ok);
+        assert_eq!(handle_request(&shared, Request::Resume, false, 0), Response::Ok);
         assert!(!shared.is_paused());
         assert!(matches!(
-            handle_request(&shared, Request::AddExclusion { path: r"C:\x".into() }, false),
+            handle_request(&shared, Request::AddExclusion { path: r"C:\x".into() }, false, 0),
             Response::Error { .. }
         ));
     }

@@ -7,7 +7,7 @@
   build\VigilTest.cer, da importare nella VM in Root e TrustedPublisher.
   NON importarlo mai sul PC principale: quel certificato potrebbe firmare qualunque driver.
 #>
-param([string]$Configuration = 'Release')
+param([string]$Configuration = 'Release', [string[]]$Files)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $signtool = Join-Path $root 'packages\Microsoft.Windows.SDK.CPP.10.0.26100.6584\c\bin\10.0.26100.0\x64\signtool.exe'
@@ -23,7 +23,10 @@ if (-not $cert) {
 }
 Export-Certificate -Cert $cert -FilePath $cer -Force | Out-Null
 
-& $signtool sign /fd SHA256 /sha1 $cert.Thumbprint /s My $sys
-if ($LASTEXITCODE -ne 0) { throw "signtool ha fallito ($LASTEXITCODE)" }
-Write-Host "Firmato: $sys"
+if (-not $Files) { $Files = @($sys) }
+foreach ($f in $Files) {
+    & $signtool sign /fd SHA256 /sha1 $cert.Thumbprint /s My $f
+    if ($LASTEXITCODE -ne 0) { throw "signtool ha fallito su $f ($LASTEXITCODE)" }
+    Write-Host "Firmato: $f"
+}
 Write-Host "Certificato: $cer"

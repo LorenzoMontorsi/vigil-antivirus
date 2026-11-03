@@ -113,7 +113,7 @@ pub(crate) fn to_dos_path(nt: &str, map: &[(String, String)]) -> Option<PathBuf>
     })
 }
 
-fn process_image(pid: u32) -> Option<String> {
+pub(crate) fn process_image(pid: u32) -> Option<String> {
     unsafe {
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if h.is_null() {

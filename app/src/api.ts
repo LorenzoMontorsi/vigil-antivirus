@@ -190,6 +190,8 @@ export function quarantineRequest(r: ScanResult): QuarantineRequest | null {
 // ── Protezione in tempo reale (servizio VigilRtd) ─────────────────────────
 
 export interface RtStats {
+  scripts_checked: number;
+  scripts_blocked: number;
   exec_checked: number;
   exec_blocked: number;
   exec_cached: number;
@@ -212,7 +214,7 @@ export interface RtStatus {
   exclusions: number;
 }
 
-export type RtEventKind = "blocked" | "quarantined" | "detected" | "quarantine_failed";
+export type RtEventKind = "blocked" | "quarantined" | "detected" | "quarantine_failed" | "script_blocked";
 
 export interface RtEvent {
   id: number;
@@ -228,6 +230,7 @@ export interface RtUiStatus {
   installed: boolean;
   running: boolean;
   status: RtStatus | null;
+  amsi_installed: boolean;
 }
 
 /** Stato sintetico per l'interfaccia. */

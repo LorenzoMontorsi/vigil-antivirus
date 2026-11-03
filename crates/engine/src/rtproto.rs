@@ -26,6 +26,9 @@ pub enum Request {
     Resume,
     /// Esclude un file o una cartella dalla protezione. SOLO amministratore.
     AddExclusion { path: String },
+    /// Contenuto di uno script da analizzare (dal provider AMSI).
+    /// `data` è in base64; `app` e `name` sono quelli riportati da AMSI.
+    ScanBuffer { app: String, name: String, data: String },
 }
 
 /// `RtStatus::paused_until` quando la sospensione dura fino al riavvio del servizio.
@@ -33,6 +36,10 @@ pub const PAUSED_UNTIL_RESTART: u64 = u64::MAX;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RtStats {
+    #[serde(default)]
+    pub scripts_checked: u64,
+    #[serde(default)]
+    pub scripts_blocked: u64,
     pub exec_checked: u64,
     pub exec_blocked: u64,
     pub exec_cached: u64,
@@ -75,6 +82,8 @@ pub enum RtEventKind {
     Detected,
     /// Minaccia trovata ma impossibile da mettere in quarantena.
     QuarantineFailed,
+    /// Script dannoso bloccato prima dell'esecuzione (AMSI).
+    ScriptBlocked,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,6 +103,8 @@ pub struct RtEvent {
 pub enum Response {
     Status(RtStatus),
     Events { events: Vec<RtEvent> },
+    /// Verdetto per `ScanBuffer`.
+    Scan { detected: bool, threat: Option<String> },
     Ok,
     Error { message: String },
 }
@@ -112,6 +123,15 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&Request::Pause { seconds: Some(300) }).unwrap(),
             r#"{"cmd":"pause","seconds":300}"#
+        );
+        // Il provider AMSI costruisce la richiesta a mano: il formato deve restare questo.
+        assert_eq!(
+            serde_json::from_str::<Request>(r#"{"cmd":"scan_buffer","app":"PowerShell","name":"","data":"QQ=="}"#).unwrap(),
+            Request::ScanBuffer { app: "PowerShell".into(), name: String::new(), data: "QQ==".into() }
+        );
+        assert_eq!(
+            serde_json::to_string(&Response::Scan { detected: true, threat: None }).unwrap(),
+            r#"{"type":"scan","detected":true,"threat":null}"#
         );
         let r = Response::Error { message: "x".into() };
         let back: Response = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();

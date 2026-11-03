@@ -10,6 +10,9 @@ $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfil
 $principal = New-ScheduledTaskPrincipal -UserId 'vigil' -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName VigilAsUser -Action $action -Principal $principal -Force | Out-Null
 Start-ScheduledTask -TaskName VigilAsUser
-for ($i = 0; $i -lt 30 -and -not (Test-Path $out); $i++) { Start-Sleep -Milliseconds 500 }
-Start-Sleep 1
+# Aspetta che l'attività finisca davvero (non solo che il file compaia).
+for ($i = 0; $i -lt 120; $i++) {
+    Start-Sleep -Milliseconds 500
+    if ((Get-ScheduledTask -TaskName VigilAsUser).State -ne 'Running' -and (Test-Path $out)) { break }
+}
 if (Test-Path $out) { Get-Content $out } else { 'nessun output' }

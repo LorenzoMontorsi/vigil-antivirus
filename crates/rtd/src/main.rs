@@ -23,6 +23,7 @@
 mod driver;
 #[cfg(windows)]
 mod ipc;
+mod script;
 #[cfg(windows)]
 mod service;
 mod state;

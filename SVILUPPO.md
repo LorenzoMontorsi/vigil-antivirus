@@ -73,8 +73,18 @@ Fatto e verificato nella VM:
   notifiche di Windows. Verificata con dati di esempio (`?rt=on` nel devMock), **non ancora con il
   servizio vero**: l'app andrebbe provata dentro la VM.
 
+Aggiunto e verificato nella VM (sera del 3 novembre):
+- icona nell'area di notifica con menu (sospensione 5 min…fino al riavvio), avvisi a popup con azioni
+- ClamAV scaricato da solo se manca; certificati radice per freshclam su Windows appena installati
+- quarantena del servizio nella pagina Quarantena; avvio con Windows nascosto nella barra
+- **protezione script (AMSI)**: `crates/amsi` è un provider COM che inoltra gli script al servizio;
+  installazione nella VM con `driver\vm\amsi-install.ps1` (DLL firmata con `sign-test.ps1 -Files`),
+  prova con `driver\vm\amsi-test.ps1` eseguito come utente (`as-user.ps1`)
+
+Per le prove nella VM: `npm run tauri build -- --debug --no-bundle` è molto più veloce della release
+(ha una console nera: normale per la build di debug).
+
 Da fare:
-- provare l'app nella VM con il servizio vero (serve il runtime WebView2 nella VM)
 - la quarantena del servizio sta in `C:\ProgramData\Vigil\quarantine`: va mostrata nella pagina Quarantena
 - ClamAV sul percorso in tempo reale, AMSI, ETW, autodifesa, installer unico (app + servizio + driver)
 - altitudine ufficiale da Microsoft e firma del driver per poterlo usare fuori dalla VM

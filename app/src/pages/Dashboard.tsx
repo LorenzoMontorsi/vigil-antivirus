@@ -109,9 +109,19 @@ export default function Dashboard({ scan, status: st, rt, go }: Props) {
     active: {
       state: "on" as const,
       label: "Attiva",
-      desc: `${nf.format(rts?.stats.exec_checked ?? 0)} esecuzioni controllate · ${nf.format(rts?.stats.exec_blocked ?? 0)} bloccate`,
+      desc: `${nf.format(rts?.stats.exec_checked ?? 0)} esecuzioni controllate · ${nf.format(rts?.stats.exec_blocked ?? 0)} ${(rts?.stats.exec_blocked ?? 0) === 1 ? "bloccata" : "bloccate"}`,
     },
   }[rs];
+
+  const amsiModule: { desc: string; state: ModuleState; label: string } = !rt.status?.amsi_installed
+    ? { state: "off", label: "Non installata", desc: "PowerShell, VBScript, JScript, macro di Office" }
+    : rs === "active"
+      ? {
+          state: "on",
+          label: "Attiva",
+          desc: `${nf.format(rts?.stats.scripts_checked ?? 0)} script controllati · ${nf.format(rts?.stats.scripts_blocked ?? 0)} ${(rts?.stats.scripts_blocked ?? 0) === 1 ? "bloccato" : "bloccati"}`,
+        }
+      : { state: "warn", label: "In pausa", desc: "Il servizio di protezione non è attivo" };
 
   const modules: { name: string; desc: string; state: ModuleState; label: string }[] = [
     {
@@ -122,7 +132,7 @@ export default function Dashboard({ scan, status: st, rt, go }: Props) {
     },
     { name: "Motore ClamAV", desc: clamState[2], state: clamState[0], label: clamState[1] },
     { name: "Protezione in tempo reale", ...rtModule },
-    { name: "Protezione script (AMSI)", desc: "PowerShell, VBScript, JScript: fase 5", state: "off", label: "In sviluppo" },
+    { name: "Protezione script (AMSI)", ...amsiModule },
   ];
 
   const updating = s?.updating ?? false;
@@ -290,6 +300,7 @@ const EVENT_LABEL: Record<RtEvent["kind"], string> = {
   quarantined: "Messo in quarantena",
   detected: "Minaccia rilevata",
   quarantine_failed: "Quarantena non riuscita",
+  script_blocked: "Script bloccato",
 };
 
 function RealtimeActivity({ events }: { events: RtEvent[] }) {
