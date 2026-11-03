@@ -1,17 +1,27 @@
 [package]
 name = "vigil-rtd"
-description = "Vigil: lato utente della protezione in tempo reale (collegato al minifilter VigilFlt)"
+description = "Vigil: servizio di protezione in tempo reale (collegato al minifilter VigilFlt)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 vigil-engine = { path = "../engine" }
+serde_json = "1"
+crossbeam-channel = "0.5"
 
 [target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
     "Win32_Storage_InstallableFileSystems",
     "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
 ] }
+
+[dev-dependencies]
+tempfile = "3"

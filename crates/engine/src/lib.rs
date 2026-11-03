@@ -17,6 +17,7 @@ pub mod clamd;
 mod exclusions;
 mod heuristics;
 pub mod quarantine;
+pub mod rtproto;
 mod scan;
 mod signatures;
 pub mod trust;

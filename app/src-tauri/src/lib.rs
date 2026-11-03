@@ -1,5 +1,6 @@
 mod clamav;
 mod feeds;
+mod rt;
 mod settings;
 mod util;
 
@@ -235,6 +236,8 @@ fn run_update_bg(app: &AppHandle) -> Result<(), String> {
         state.updating.store(false, Ordering::SeqCst);
 
         log("Ricompilazione delle firme di Vigil…");
+        // Se il servizio di protezione è attivo, ricarica anche lui le firme.
+        let _ = rt::query(&vigil_engine::rtproto::Request::Reload);
         reload_engine_bg(&app);
         if s.clamav_enabled && !state.clamav.client().ping() {
             start_clamav_bg(&app);
@@ -357,6 +360,21 @@ fn quarantine_delete(app: AppHandle, state: State<'_, AppState>, ids: Vec<String
     }
     let _ = app.emit("quarantine://changed", ());
     if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
+}
+
+#[tauri::command]
+fn rt_status(rt: State<'_, rt::Realtime>) -> rt::RtUiStatus {
+    rt.ui()
+}
+
+#[tauri::command]
+fn rt_events(rt: State<'_, rt::Realtime>) -> Vec<vigil_engine::rtproto::RtEvent> {
+    rt.events()
+}
+
+#[tauri::command]
+fn rt_set_enabled(enabled: bool) -> Result<(), String> {
+    rt::set_enabled(enabled)
 }
 
 #[tauri::command]
@@ -564,6 +582,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_data_dir()?;
@@ -602,6 +621,9 @@ pub fn run() {
                 data_dir: data_dir.clone(),
             });
 
+            app.manage(rt::Realtime::default());
+            rt::spawn_poller(app.handle().clone());
+
             let handle = app.handle();
             if needs_update {
                 // L'aggiornamento ricompila e avvia ClamAV da solo alla fine.
@@ -628,6 +650,9 @@ pub fn run() {
             quarantine_list,
             quarantine_restore,
             quarantine_delete,
+            rt_status,
+            rt_events,
+            rt_set_enabled,
         ])
         .build(tauri::generate_context!())
         .expect("errore durante l'avvio di Vigil")

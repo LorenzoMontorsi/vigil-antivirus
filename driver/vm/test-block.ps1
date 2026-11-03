@@ -1,22 +1,37 @@
-# Eseguito NELLA VM: un eseguibile pulito deve partire, uno marcato deve essere bloccato.
+# Eseguito NELLA VM:
+#  1. un eseguibile pulito deve partire, uno marcato deve essere bloccato;
+#  2. un file marcato appena scritto deve finire in quarantena da solo.
 $ErrorActionPreference = 'Continue'
 $dir = 'C:\Vigil\prova'
+$marker = 'VIGIL-TEST-QUARANTENA-7f3a'
 New-Item -ItemType Directory -Force $dir | Out-Null
-Copy-Item C:\Windows\System32\whoami.exe "$dir\pulito.exe" -Force
-Copy-Item C:\Windows\System32\whoami.exe "$dir\marcato.exe" -Force
-# Il marcatore in coda (overlay) non impedisce l'esecuzione, ma la regola YARA di prova lo riconosce.
-[IO.File]::AppendAllText("$dir\marcato.exe", 'VIGIL-TEST-QUARANTENA-7f3a')
-Start-Sleep 2
+Remove-Item "$dir\*" -Force -ErrorAction SilentlyContinue
 
-foreach ($name in 'pulito', 'marcato') {
-    $exe = Join-Path $dir "$name.exe"
-    try {
-        $out = & $exe 2>&1
-        "{0}.exe -> PARTITO (output: {1})" -f $name, ($out -join ' ')
-    } catch {
-        "{0}.exe -> BLOCCATO ({1})" -f $name, $_.Exception.Message
-    }
+# Gli eseguibili vengono preparati in un'altra cartella e poi spostati:
+# copiarli direttamente qui li farebbe già isolare dalla protezione sulla scrittura.
+$tmp = Join-Path $env:TEMP 'vigil-prep'
+New-Item -ItemType Directory -Force $tmp | Out-Null
+Copy-Item C:\Windows\System32\whoami.exe "$dir\pulito.exe" -Force
+
+'== 1. blocco dell''esecuzione'
+& "$dir\pulito.exe" | Out-Null
+"pulito.exe  -> " + $(if ($?) { 'PARTITO' } else { 'errore' })
+
+# marcato.exe: whoami + marcatore in coda, scritto con un'unica operazione.
+$bytes = [IO.File]::ReadAllBytes('C:\Windows\System32\whoami.exe') + [Text.Encoding]::ASCII.GetBytes($marker)
+[IO.File]::WriteAllBytes("$dir\marcato.exe", $bytes)
+Start-Sleep 3
+if (Test-Path "$dir\marcato.exe") {
+    try { & "$dir\marcato.exe" | Out-Null; 'marcato.exe -> PARTITO (male!)' }
+    catch { 'marcato.exe -> BLOCCATO: ' + $_.Exception.Message }
+} else {
+    'marcato.exe -> già messo in quarantena alla scrittura (ancora meglio)'
 }
-Start-Sleep 1
-'--- log vigil-rtd (ultime righe):'
-Get-Content C:\Vigil\rtd.log -Tail 12
+
+'== 2. quarantena automatica alla scrittura'
+Set-Content -Path "$dir\scaricato.txt" -Value "documento con marcatore $marker" -Encoding ascii
+Start-Sleep 4
+'scaricato.txt -> ' + $(if (Test-Path "$dir\scaricato.txt") { 'ANCORA PRESENTE (male!)' } else { 'RIMOSSO e messo in quarantena' })
+
+'== eventi del servizio'
+& 'C:\Program Files\Vigil\vigil-rtd.exe' status | Select-String -Pattern '^#|exec_|writes_|quarantined|threats'
