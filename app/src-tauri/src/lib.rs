@@ -4,6 +4,7 @@ mod rt;
 mod toast;
 mod tray;
 mod settings;
+mod shell;
 mod util;
 
 use std::{
@@ -27,7 +28,30 @@ use clamav::{ClamAv, ClamStatus};
 use feeds::{FeedState, SourceStatus};
 use settings::{RulesPackage, Settings};
 
-const AUTO_UPDATE_EVERY: u64 = 24 * 3600;
+/// Ogni quanto il pianificatore controlla se è ora di aggiornare.
+const UPDATE_CHECK_EVERY: Duration = Duration::from_secs(15 * 60);
+
+/// `true` se l'ultimo aggiornamento è più vecchio dell'intervallo scelto.
+fn update_due(feeds_dir: &Path, interval_hours: u64) -> bool {
+    FeedState::load(feeds_dir)
+        .last_update_unix
+        .is_none_or(|t| util::now_unix().saturating_sub(t) >= interval_hours.clamp(1, 168) * 3600)
+}
+
+/// Cerca aggiornamenti in autonomia: firme e motore, ogni `update_interval_hours`.
+fn spawn_update_scheduler(app: AppHandle) {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(UPDATE_CHECK_EVERY);
+            let state = app.state::<AppState>();
+            let s = state.settings();
+            if s.auto_update && update_due(&state.feeds_dir, s.update_interval_hours) {
+                // Se è già in corso un aggiornamento (manuale) non succede nulla.
+                let _ = run_update_bg(&app);
+            }
+        }
+    });
+}
 
 struct AppState {
     engine: RwLock<Arc<Engine>>,
@@ -238,6 +262,36 @@ fn run_update_bg(app: &AppHandle) -> Result<(), String> {
                     log(&format!("ClamAV: errore: {e}"));
                     sources.push(SourceStatus { name: "ClamAV".into(), ok: false, message: e });
                 }
+            }
+        }
+
+        // Motore: nuova versione di ClamAV? Si installa solo con la firma GPG di Talos valida.
+        if s.clamav_enabled && clamav_ready && s.auto_engine_update {
+            let current = clamav::installed_version(&state.clamav_dir()).unwrap_or_default();
+            match clamav::latest_release() {
+                Ok(latest) if clamav::parse_version(&latest) > clamav::parse_version(&current) => {
+                    log(&format!("ClamAV: nuova versione del motore {latest} (installata {current}), download e verifica della firma…"));
+                    let res = clamav::download_version(
+                        &state.clamav_download_dir,
+                        &latest,
+                        || {
+                            // clamd tiene aperti i file: va fermato prima di sostituirli.
+                            state.clamav.stop();
+                            let _ = state.clamav.client().shutdown();
+                            std::thread::sleep(Duration::from_secs(2));
+                        },
+                        |m| log(&format!("ClamAV: {m}")),
+                    );
+                    match res {
+                        Ok(()) => {
+                            *state.clamav_install.write().unwrap() = state.clamav_download_dir.clone();
+                            log(&format!("ClamAV: motore aggiornato a {latest}"));
+                        }
+                        Err(e) => log(&format!("ClamAV: aggiornamento del motore non riuscito: {e}")),
+                    }
+                }
+                Ok(_) => log(&format!("ClamAV: il motore è aggiornato (versione {current})")),
+                Err(e) => log(&format!("ClamAV: impossibile controllare nuove versioni del motore: {e}")),
             }
         }
 
@@ -552,6 +606,9 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
     if old.start_at_login != settings.start_at_login {
         apply_autostart(&app, settings.start_at_login);
     }
+    if old.context_menu != settings.context_menu {
+        shell::apply(settings.context_menu);
+    }
     let clamav_changed = old.clamav_enabled != settings.clamav_enabled;
     if clamav_changed {
         if settings.clamav_enabled {
@@ -705,8 +762,13 @@ fn cancel_scan(state: State<'_, AppState>) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(shell::ShellScan::default())
         // Una sola istanza: rilanciare Vigil riapre la finestra esistente.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| toast::show_main(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // "Analizza con Vigil" con Vigil già aperto: i percorsi arrivano qui.
+            let paths = shell::scan_args(&args);
+            if paths.is_empty() { toast::show_main(app) } else { shell::queue(app, paths) }
+        }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--hidden"]),
@@ -736,11 +798,8 @@ pub fn run() {
                 if clamav::is_valid_install(&bundled_clamav) { bundled_clamav } else { clamav_download_dir.clone() };
             let clamav_missing = settings.clamav_enabled && !clamav::is_valid_install(&clamav_install);
 
-            let needs_update = clamav_missing
-                || settings.auto_update
-                    && FeedState::load(&feeds_dir)
-                        .last_update_unix
-                        .is_none_or(|t| util::now_unix().saturating_sub(t) > AUTO_UPDATE_EVERY);
+            let needs_update =
+                clamav_missing || settings.auto_update && update_due(&feeds_dir, settings.update_interval_hours);
 
             app.manage(AppState {
                 // Si parte con le sole regole integrate: l'interfaccia si apre subito.
@@ -765,8 +824,13 @@ pub fn run() {
             app.manage(toast::Toasts::default());
             tray::init(app.handle())?;
             rt::spawn_poller(app.handle().clone());
+            spawn_update_scheduler(app.handle().clone());
 
             apply_autostart(app.handle(), app.state::<AppState>().settings().start_at_login);
+            shell::apply(app.state::<AppState>().settings().context_menu);
+            // Avviato da "Analizza con Vigil" mentre non era aperto.
+            let args: Vec<String> = std::env::args().collect();
+            shell::queue(app.handle(), shell::scan_args(&args));
 
             // Chiudere la finestra la nasconde: Vigil resta attivo nell'area di notifica.
             // All'avvio automatico (--hidden) la finestra non compare affatto.
@@ -820,6 +884,7 @@ pub fn run() {
             toast::toast_get,
             toast::toast_action,
             toast::toast_close,
+            shell::take_shell_scan,
         ])
         .build(tauri::generate_context!())
         .expect("errore durante l'avvio di Vigil")

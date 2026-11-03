@@ -30,10 +30,16 @@ pub struct Settings {
     /// Auth-Key gratuita da https://auth.abuse.ch/ (vuota = MalwareBazaar disattivato).
     pub malwarebazaar_key: String,
     pub auto_update: bool,
+    /// Ogni quante ore cercare aggiornamenti (firme e motore) mentre Vigil è aperto.
+    pub update_interval_hours: u64,
+    /// Aggiorna da solo anche il motore ClamAV (solo pacchetti con firma GPG di Cisco Talos).
+    pub auto_engine_update: bool,
     /// Usa il motore ClamAV incluso in Vigil.
     pub clamav_enabled: bool,
     /// Avvia Vigil (nascosto nell'area di notifica) all'accesso a Windows.
     pub start_at_login: bool,
+    /// Voce "Analizza con Vigil" nel menu del tasto destro di Esplora risorse.
+    pub context_menu: bool,
 }
 
 impl Default for Settings {
@@ -49,8 +55,11 @@ impl Default for Settings {
             rules_package: RulesPackage::Core,
             malwarebazaar_key: String::new(),
             auto_update: true,
+            update_interval_hours: 4,
+            auto_engine_update: true,
             clamav_enabled: true,
             start_at_login: true,
+            context_menu: true,
         }
     }
 }

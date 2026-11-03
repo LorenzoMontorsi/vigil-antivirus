@@ -17,64 +17,139 @@ use crate::util::hide_window;
 
 pub const PORT: u16 = 33100;
 
-/// Versione di ClamAV usata da Vigil: la stessa di scripts/fetch-clamav.ps1.
-/// L'hash è quello del pacchetto ufficiale verificato con la firma GPG di Cisco Talos.
+/// Versione di ClamAV di riferimento (scripts/fetch-clamav.ps1): per questa c'è anche lo
+/// SHA-256 fissato. Le versioni più nuove vengono accettate solo con la firma GPG di Talos.
 pub const CLAMAV_VERSION: &str = "1.5.4";
 const CLAMAV_SHA256: &str = "0d9e0228b2674137ea1a2853566c98a0278ad52ab2582c3d6dbd75373848c395";
 const UA: &str = concat!("Vigil/", env!("CARGO_PKG_VERSION"));
 
-/// Scarica ClamAV dalle release ufficiali, ne verifica lo SHA-256 ed estrae in `dest`
-/// solo i file che servono (clamd, freshclam, DLL, certificati, licenze).
-pub fn download(dest: &Path, mut log: impl FnMut(&str)) -> Result<(), String> {
-    use sha2::{Digest, Sha256};
-    use std::io::{Read, Write};
+/// Chiave pubblica ufficiale di Cisco Talos per le release di ClamAV
+/// (dal repository della documentazione di ClamAV) e la sua impronta attesa.
+/// Talos ruota la chiave ogni paio d'anni: quando cambia, gli aggiornamenti
+/// automatici del motore si fermano (in modo sicuro) finché non si aggiorna Vigil.
+const TALOS_KEY: &str = include_str!("../keys/cisco-talos.asc");
+const TALOS_FINGERPRINT: &str = "5badca2665ef59dcf8a23d8b707f0db480836771";
 
-    let name = format!("clamav-{CLAMAV_VERSION}.win.x64");
-    let url = format!("https://github.com/Cisco-Talos/clamav/releases/download/clamav-{CLAMAV_VERSION}/{name}.zip");
-    let parent = dest.parent().ok_or("cartella di destinazione non valida")?;
-    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let zip_path = parent.join(format!("{name}.zip.part"));
+/// "1.5.4" -> (1, 5, 4)
+pub fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
+    let mut it = v.trim().trim_start_matches("clamav-").split('.').map(|p| p.parse::<u32>().ok());
+    Some((it.next()??, it.next()??, it.next().flatten().unwrap_or(0)))
+}
 
-    let resp = ureq::get(&url)
+/// Versione installata in `dir` (file VERSION scritto da Vigil o da fetch-clamav.ps1).
+pub fn installed_version(dir: &Path) -> Option<String> {
+    fs::read_to_string(dir.join("VERSION")).ok().map(|v| v.trim().to_owned())
+}
+
+/// Ultima versione stabile pubblicata da Cisco Talos (tra le release recenti su GitHub).
+pub fn latest_release() -> Result<String, String> {
+    let body = ureq::get("https://api.github.com/repos/Cisco-Talos/clamav/releases?per_page=20")
+        .set("User-Agent", UA)
+        .set("Accept", "application/vnd.github+json")
+        .timeout(Duration::from_secs(30))
+        .call()
+        .map_err(|e| format!("controllo delle versioni di ClamAV: {e}"))?
+        .into_string()
+        .map_err(|e| e.to_string())?;
+    let releases: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    releases
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|r| !r["draft"].as_bool().unwrap_or(true) && !r["prerelease"].as_bool().unwrap_or(true))
+        .filter_map(|r| r["tag_name"].as_str())
+        .filter_map(|t| parse_version(t).map(|v| (v, t.trim_start_matches("clamav-").to_owned())))
+        .max_by_key(|(v, _)| *v)
+        .map(|(_, t)| t)
+        .ok_or_else(|| "nessuna release stabile trovata".into())
+}
+
+/// Verifica la firma GPG (separata) di Cisco Talos sui dati.
+fn verify_talos(data: &[u8], signature: &[u8]) -> Result<(), String> {
+    use pgp::composed::{Deserializable, DetachedSignature, SignedPublicKey};
+    use pgp::types::KeyDetails;
+    let (key, _) = SignedPublicKey::from_string(TALOS_KEY).map_err(|e| format!("chiave di Talos non leggibile: {e}"))?;
+    let fpr: String = key.fingerprint().as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+    if fpr != TALOS_FINGERPRINT {
+        return Err("impronta della chiave di Talos inattesa".into());
+    }
+    // La fiducia viene dall'impronta fissata sopra, non dalle auto-certificazioni della chiave.
+    let (sig, _) = DetachedSignature::from_reader_single(signature).map_err(|e| format!("firma non leggibile: {e}"))?;
+    sig.verify(&key, data).map_err(|_| "firma GPG NON valida".to_string())
+}
+
+fn get_bytes(url: &str, limit: u64, mut progress: impl FnMut(u64, Option<u64>)) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let resp = ureq::get(url)
         .set("User-Agent", UA)
         .timeout(Duration::from_secs(1800))
         .call()
-        .map_err(|e| format!("download di ClamAV: {e}"))?;
-    let total_mb = resp.header("Content-Length").and_then(|v| v.parse::<u64>().ok()).map(|b| b / (1024 * 1024));
-    let mut reader = resp.into_reader().take(512 * 1024 * 1024);
-    let mut file = fs::File::create(&zip_path).map_err(|e| e.to_string())?;
-    let mut hasher = Sha256::new();
+        .map_err(|e| format!("download: {e}"))?;
+    let total = resp.header("Content-Length").and_then(|v| v.parse::<u64>().ok());
+    let mut reader = resp.into_reader().take(limit);
+    let mut out = Vec::with_capacity(total.unwrap_or(0) as usize);
     let mut buf = vec![0u8; 256 * 1024];
-    let (mut done, mut next_report) = (0u64, 0u64);
     loop {
         let n = reader.read(&mut buf).map_err(|e| format!("download interrotto: {e}"))?;
         if n == 0 {
             break;
         }
-        file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
-        hasher.update(&buf[..n]);
-        done += n as u64;
+        out.extend_from_slice(&buf[..n]);
+        progress(out.len() as u64, total);
+    }
+    Ok(out)
+}
+
+/// Scarica ClamAV nella versione fissata di riferimento (SHA-256 + firma GPG).
+pub fn download(dest: &Path, log: impl FnMut(&str)) -> Result<(), String> {
+    download_version(dest, CLAMAV_VERSION, || {}, log)
+}
+
+/// Scarica ClamAV `version` dalle release ufficiali, ne verifica la firma GPG di Cisco
+/// Talos (e lo SHA-256 se è la versione di riferimento) ed estrae in `dest` solo i file
+/// che servono. `before_swap` viene chiamata subito prima di sostituire i file (per
+/// fermare clamd, che altrimenti li terrebbe aperti).
+pub fn download_version(dest: &Path, version: &str, before_swap: impl FnOnce(), mut log: impl FnMut(&str)) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+
+    if parse_version(version).is_none() || version.contains(['/', '\\']) {
+        return Err(format!("versione non valida: {version}"));
+    }
+    let name = format!("clamav-{version}.win.x64");
+    let base = format!("https://github.com/Cisco-Talos/clamav/releases/download/clamav-{version}/{name}.zip");
+    let parent = dest.parent().ok_or("cartella di destinazione non valida")?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+
+    let mut next_report = 0u64;
+    let data = get_bytes(&base, 512 * 1024 * 1024, |done, total| {
         if done >= next_report {
             let mb = done / (1024 * 1024);
-            log(&match total_mb {
-                Some(t) => format!("scaricati {mb} di {t} MB"),
+            log(&match total {
+                Some(t) => format!("scaricati {mb} di {} MB", t / (1024 * 1024)),
                 None => format!("scaricati {mb} MB"),
             });
             next_report += 25 * 1024 * 1024;
         }
+    })?;
+    let signature = get_bytes(&format!("{base}.sig"), 64 * 1024, |_, _| {})?;
+
+    // 1. Firma GPG di Cisco Talos: obbligatoria per qualsiasi versione.
+    verify_talos(&data, &signature).map_err(|e| format!("{e}: pacchetto scartato"))?;
+    log("firma GPG di Cisco Talos verificata");
+    // 2. Per la versione di riferimento, anche lo SHA-256 fissato.
+    if version == CLAMAV_VERSION {
+        let hash: String = Sha256::digest(&data).iter().map(|b| format!("{b:02x}")).collect();
+        if hash != CLAMAV_SHA256 {
+            return Err(format!("SHA-256 del pacchetto non corrispondente (atteso {CLAMAV_SHA256}, trovato {hash}): scartato"));
+        }
+        log("SHA-256 verificato");
     }
-    drop(file);
-    let hash: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    if hash != CLAMAV_SHA256 {
-        let _ = fs::remove_file(&zip_path);
-        return Err(format!("SHA-256 del pacchetto non corrispondente (atteso {CLAMAV_SHA256}, trovato {hash}): scartato"));
-    }
-    log("SHA-256 verificato, estrazione…");
+    log("estrazione…");
 
     let tmp = dest.with_extension("tmp");
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-    let mut archive = zip::ZipArchive::new(fs::File::open(&zip_path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&data)).map_err(|e| e.to_string())?;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
         // enclosed_name rifiuta i percorsi che uscirebbero dalla cartella ("..", assoluti).
@@ -96,21 +171,21 @@ pub fn download(dest: &Path, mut log: impl FnMut(&str)) -> Result<(), String> {
         let mut f = fs::File::create(&out).map_err(|e| e.to_string())?;
         std::io::copy(&mut entry, &mut f).map_err(|e| e.to_string())?;
     }
-    fs::write(tmp.join("VERSION"), CLAMAV_VERSION).map_err(|e| e.to_string())?;
+    fs::write(tmp.join("VERSION"), version).map_err(|e| e.to_string())?;
     let _ = fs::write(
         tmp.join("LEGGIMI-CLAMAV.txt"),
         format!(
-            "ClamAV {CLAMAV_VERSION} - Copyright (C) Cisco Systems, Inc. e contributori.\r\n\
+            "ClamAV {version} - Copyright (C) Cisco Systems, Inc. e contributori.\r\n\
              Distribuito sotto GNU GPL v2 (vedi COPYING.txt e la cartella COPYING).\r\n\
-             Codice sorgente: https://github.com/Cisco-Talos/clamav/releases/tag/clamav-{CLAMAV_VERSION}\r\n"
+             Codice sorgente: https://github.com/Cisco-Talos/clamav/releases/tag/clamav-{version}\r\n"
         ),
     );
     if !is_valid_install(&tmp) {
         return Err("pacchetto di ClamAV incompleto".into());
     }
+    before_swap();
     let _ = fs::remove_dir_all(dest);
-    fs::rename(&tmp, dest).map_err(|e| e.to_string())?;
-    let _ = fs::remove_file(&zip_path);
+    fs::rename(&tmp, dest).map_err(|e| format!("sostituzione dei file di ClamAV: {e}"))?;
     Ok(())
 }
 
@@ -309,5 +384,42 @@ impl ClamAv {
             }
             let _ = c.kill();
         }
+    }
+}
+
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+
+    #[test]
+    fn versions_compare() {
+        assert_eq!(parse_version("clamav-1.5.4"), Some((1, 5, 4)));
+        assert!(parse_version("1.6.0") > parse_version("1.5.4"));
+        assert!(parse_version("1.4.6") < parse_version("1.5.4"));
+        assert_eq!(parse_version("abc"), None);
+    }
+
+    /// Prova con il pacchetto vero (se presente, lo scarica scripts/fetch-clamav.ps1):
+    /// la firma di Talos deve essere valida, e un solo byte cambiato deve invalidarla.
+    #[test]
+    fn real_talos_signature_verifies() {
+        let zip = std::env::temp_dir().join(r"vigil-clamav-1.5.4\clamav-1.5.4.win.x64.zip");
+        let sig = std::env::temp_dir().join(r"vigil-clamav-1.5.4\clamav-1.5.4.win.x64.zip.sig");
+        let (Ok(data), Ok(signature)) = (fs::read(&zip), fs::read(&sig)) else {
+            eprintln!("pacchetto di prova assente: test saltato");
+            return;
+        };
+        verify_talos(&data, &signature).expect("la firma vera deve essere valida");
+        let mut tampered = data;
+        tampered[1000] ^= 1;
+        assert!(verify_talos(&tampered, &signature).is_err(), "un pacchetto manomesso va rifiutato");
+    }
+
+    #[test]
+    fn talos_key_is_the_expected_one() {
+        // La chiave incorporata deve leggersi; una firma fasulla va rifiutata.
+        let err = verify_talos(b"dati", b"non una firma").unwrap_err();
+        assert!(err.contains("firma"), "{err}");
     }
 }

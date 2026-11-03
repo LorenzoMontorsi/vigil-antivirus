@@ -45,8 +45,11 @@ const settings: Settings = {
   rules_package: "core",
   malwarebazaar_key: "",
   auto_update: true,
+  update_interval_hours: 4,
+  auto_engine_update: true,
   clamav_enabled: true,
   start_at_login: true,
+  context_menu: true,
 };
 
 const vault = [

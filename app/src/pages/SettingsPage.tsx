@@ -93,6 +93,12 @@ export default function SettingsPage({ status, rt }: { status: StatusController;
           title="Avvia Vigil all'accesso a Windows"
           desc="Vigil parte nascosto nell'area di notifica (l'icona vicino all'orologio): niente finestre, solo gli avvisi quando serve."
         />
+        <Toggle
+          checked={settings.context_menu}
+          onChange={(v) => set("context_menu", v)}
+          title="«Analizza con Vigil» nel menu del tasto destro"
+          desc="Su file, cartelle e unità. Su Windows 11 la voce si trova sotto «Mostra altre opzioni»."
+        />
       </section>
 
       <section className="card">
@@ -198,7 +204,29 @@ export default function SettingsPage({ status, rt }: { status: StatusController;
           checked={settings.auto_update}
           onChange={(v) => set("auto_update", v)}
           title="Aggiornamento automatico"
-          desc="All'avvio, se le firme hanno più di 24 ore."
+          desc="Vigil cerca da solo nuove definizioni dei virus mentre è aperto (anche solo nell'area di notifica)."
+        />
+        {settings.auto_update && (
+          <label className="field">
+            <span>Cerca aggiornamenti ogni</span>
+            <select
+              className="input"
+              value={settings.update_interval_hours}
+              onChange={(e) => set("update_interval_hours", Number(e.target.value))}
+            >
+              {[1, 2, 4, 8, 12, 24].map((h) => (
+                <option key={h} value={h}>
+                  {h === 1 ? "1 ora" : `${h} ore`}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <Toggle
+          checked={settings.auto_engine_update}
+          onChange={(v) => set("auto_engine_update", v)}
+          title="Aggiorna anche il motore ClamAV"
+          desc="Installa da solo le nuove versioni di ClamAV pubblicate da Cisco Talos, solo se la loro firma digitale GPG è valida."
         />
         <div className="row gap-sm">
           <button className="btn primary" onClick={status.update} disabled={status.status?.updating}>

@@ -113,8 +113,11 @@ export interface Settings {
   rules_package: RulesPackage;
   malwarebazaar_key: string;
   auto_update: boolean;
+  update_interval_hours: number;
+  auto_engine_update: boolean;
   clamav_enabled: boolean;
   start_at_login: boolean;
+  context_menu: boolean;
 }
 
 export type ScanKind = "quick" | "full" | "custom";

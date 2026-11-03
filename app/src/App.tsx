@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 import { useScan } from "./useScan";
 import { useStatus } from "./useStatus";
@@ -38,7 +39,17 @@ export default function App() {
         start("quick");
       }),
       listen<Page>("tray://open-page", (e) => setPage(e.payload)),
+      listen("shell://scan", () => takeShellScan()),
     ];
+    // "Analizza con Vigil" dal menu del tasto destro: scansione personalizzata dei percorsi scelti.
+    const takeShellScan = () =>
+      invoke<string[]>("take_shell_scan").then((paths) => {
+        if (paths.length > 0) {
+          setPage("scan");
+          start("custom", paths);
+        }
+      });
+    takeShellScan(); // al primo avvio i percorsi possono essere già in attesa
     return () => {
       uns.forEach((p) => p.then((un) => un()));
     };
