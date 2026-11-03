@@ -46,6 +46,7 @@ const settings: Settings = {
   malwarebazaar_key: "",
   auto_update: true,
   clamav_enabled: true,
+  start_at_login: true,
 };
 
 const vault = [
@@ -147,6 +148,8 @@ export function installDevMock() {
           return args.action === "quarantine" ? "Messo in quarantena" : "Fatto";
         case "rt_status":
           return rtDemo ? rtStatus : { installed: false, running: false, status: null };
+        case "rt_vault_list":
+          return rtDemo ? [vault[0]] : [];
         case "rt_events":
           return rtDemo ? rtEvents : [];
         case "quarantine_list":

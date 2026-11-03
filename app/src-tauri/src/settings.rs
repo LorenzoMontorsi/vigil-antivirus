@@ -32,6 +32,8 @@ pub struct Settings {
     pub auto_update: bool,
     /// Usa il motore ClamAV incluso in Vigil.
     pub clamav_enabled: bool,
+    /// Avvia Vigil (nascosto nell'area di notifica) all'accesso a Windows.
+    pub start_at_login: bool,
 }
 
 impl Default for Settings {
@@ -48,6 +50,7 @@ impl Default for Settings {
             malwarebazaar_key: String::new(),
             auto_update: true,
             clamav_enabled: true,
+            start_at_login: true,
         }
     }
 }

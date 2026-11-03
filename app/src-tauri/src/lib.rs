@@ -337,7 +337,7 @@ fn full_scan_roots() -> Vec<PathBuf> {
 // ── Comandi ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-fn status(state: State<'_, AppState>) -> StatusDto {
+fn status(state: State<'_, AppState>, rt: State<'_, rt::Realtime>) -> StatusDto {
     let s = state.settings();
     StatusDto {
         engine: state.engine.read().unwrap().info().clone(),
@@ -348,7 +348,8 @@ fn status(state: State<'_, AppState>) -> StatusDto {
         clamav_enabled: s.clamav_enabled,
         clamav: state.clamav.status(&state.clamav_dir()),
         cache_entries: state.cache.lock().unwrap().as_ref().map_or(0, |c| c.len()),
-        quarantine_count: state.quarantine.list().map(|l| l.len()).unwrap_or(0),
+        // Quarantena dell'app + quella del servizio di protezione in tempo reale.
+        quarantine_count: state.quarantine.list().map(|l| l.len()).unwrap_or(0) + rt::vault_items(&rt.ui()).len(),
     }
 }
 
@@ -448,6 +449,32 @@ fn rt_resume() -> Result<(), String> {
 }
 
 #[tauri::command]
+fn rt_vault_list(rt: State<'_, rt::Realtime>) -> Vec<vigil_engine::quarantine::QuarantineItem> {
+    rt::vault_items(&rt.ui())
+}
+
+#[tauri::command]
+fn rt_vault_restore(id: String, exclude: bool) -> Result<(), String> {
+    rt::vault_restore(&id, exclude)
+}
+
+#[tauri::command]
+fn rt_vault_delete(ids: Vec<String>) -> Result<(), String> {
+    rt::vault_delete(&ids)
+}
+
+/// Avvio automatico all'accesso (HKCU\...\Run), con l'app nascosta nell'area di notifica.
+fn apply_autostart(app: &AppHandle, enabled: bool) {
+    use tauri_plugin_autostart::ManagerExt;
+    // In sviluppo non registriamo l'eseguibile di debug.
+    if cfg!(debug_assertions) {
+        return;
+    }
+    let al = app.autolaunch();
+    let _ = if enabled { al.enable() } else { al.disable() };
+}
+
+#[tauri::command]
 fn clear_cache(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     if state.scan_cancel.lock().unwrap().is_some() {
         return Err("Impossibile svuotare la cache durante una scansione".into());
@@ -522,6 +549,9 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
 fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings) -> Result<(), String> {
     settings.save(&state.settings_path)?;
     let old = std::mem::replace(&mut *state.settings.lock().unwrap(), settings.clone());
+    if old.start_at_login != settings.start_at_login {
+        apply_autostart(&app, settings.start_at_login);
+    }
     let clamav_changed = old.clamav_enabled != settings.clamav_enabled;
     if clamav_changed {
         if settings.clamav_enabled {
@@ -677,6 +707,10 @@ pub fn run() {
     tauri::Builder::default()
         // Una sola istanza: rilanciare Vigil riapre la finestra esistente.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| toast::show_main(app)))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]),
+        ))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -732,8 +766,14 @@ pub fn run() {
             tray::init(app.handle())?;
             rt::spawn_poller(app.handle().clone());
 
+            apply_autostart(app.handle(), app.state::<AppState>().settings().start_at_login);
+
             // Chiudere la finestra la nasconde: Vigil resta attivo nell'area di notifica.
+            // All'avvio automatico (--hidden) la finestra non compare affatto.
             if let Some(main) = app.get_webview_window("main") {
+                if !std::env::args().any(|a| a == "--hidden") {
+                    let _ = main.show();
+                }
                 let w = main.clone();
                 main.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -774,6 +814,9 @@ pub fn run() {
             rt_set_enabled,
             rt_pause,
             rt_resume,
+            rt_vault_list,
+            rt_vault_restore,
+            rt_vault_delete,
             toast::toast_get,
             toast::toast_action,
             toast::toast_close,

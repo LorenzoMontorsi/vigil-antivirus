@@ -114,6 +114,7 @@ export interface Settings {
   malwarebazaar_key: string;
   auto_update: boolean;
   clamav_enabled: boolean;
+  start_at_login: boolean;
 }
 
 export type ScanKind = "quick" | "full" | "custom";
@@ -244,5 +245,8 @@ export const rtApi = {
   events: () => invoke<RtEvent[]>("rt_events"),
   setEnabled: (enabled: boolean) => invoke<void>("rt_set_enabled", { enabled }),
   pause: (minutes: number | null) => invoke<void>("rt_pause", { minutes }),
+  vaultList: () => invoke<QuarantineItem[]>("rt_vault_list"),
+  vaultRestore: (id: string, exclude: boolean) => invoke<void>("rt_vault_restore", { id, exclude }),
+  vaultDelete: (ids: string[]) => invoke<void>("rt_vault_delete", { ids }),
   resume: () => invoke<void>("rt_resume"),
 };

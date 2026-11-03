@@ -150,17 +150,11 @@ impl Quarantine {
     }
 
     pub fn list(&self) -> io::Result<Vec<QuarantineItem>> {
-        let mut items = Vec::new();
-        for entry in fs::read_dir(&self.dir)? {
-            let p = entry?.path();
-            if p.extension().is_some_and(|e| e == "json") {
-                if let Some(item) = fs::read_to_string(&p).ok().and_then(|s| serde_json::from_str(&s).ok()) {
-                    items.push(item);
-                }
-            }
-        }
-        items.sort_by(|a: &QuarantineItem, b| b.quarantined_at.cmp(&a.quarantined_at).then(b.id.cmp(&a.id)));
-        Ok(items)
+        list_dir(&self.dir)
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
     }
 
     pub fn get(&self, id: &str) -> Result<QuarantineItem, QuarantineError> {
@@ -214,6 +208,22 @@ impl Quarantine {
         let (nonce, ct) = blob.split_at(12);
         self.cipher.decrypt(Nonce::from_slice(nonce), ct).map_err(|_| QuarantineError::Corrupted)
     }
+}
+
+/// Elenca un deposito senza aprirlo né modificarlo (basta il permesso di lettura):
+/// serve all'app per mostrare la quarantena del servizio, che non può scrivere.
+pub fn list_dir(dir: &Path) -> io::Result<Vec<QuarantineItem>> {
+    let mut items = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let p = entry?.path();
+        if p.extension().is_some_and(|e| e == "json") {
+            if let Some(item) = fs::read_to_string(&p).ok().and_then(|s| serde_json::from_str(&s).ok()) {
+                items.push(item);
+            }
+        }
+    }
+    items.sort_by(|a: &QuarantineItem, b| b.quarantined_at.cmp(&a.quarantined_at).then(b.id.cmp(&a.id)));
+    Ok(items)
 }
 
 fn new_id() -> String {

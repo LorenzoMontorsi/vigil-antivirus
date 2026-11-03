@@ -203,6 +203,7 @@ impl Shared {
             last_event_id: self.next_id.load(Ordering::SeqCst) - 1,
             paused_until: self.paused_until.load(Ordering::SeqCst),
             exclusions: self.exclusions.read().unwrap().paths.len(),
+            quarantine_dir: self.quarantine.as_ref().map(|q| q.dir().display().to_string()),
         }
     }
 }

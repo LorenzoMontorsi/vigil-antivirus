@@ -58,6 +58,10 @@ pub struct RtStatus {
     pub paused_until: u64,
     #[serde(default)]
     pub exclusions: usize,
+    /// Deposito della quarantena del servizio (leggibile dagli utenti, modificabile
+    /// solo dagli amministratori).
+    #[serde(default)]
+    pub quarantine_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,6 +127,7 @@ mod tests {
             last_event_id: 0,
             paused_until: 0,
             exclusions: 0,
+            quarantine_dir: None,
         });
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.starts_with(r#"{"type":"status","version":"0.1.0""#), "{json}");

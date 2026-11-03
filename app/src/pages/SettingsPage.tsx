@@ -86,6 +86,16 @@ export default function SettingsPage({ status, rt }: { status: StatusController;
       <RealtimeSection rt={rt} />
 
       <section className="card">
+        <h3 className="card-title">Avvio</h3>
+        <Toggle
+          checked={settings.start_at_login}
+          onChange={(v) => set("start_at_login", v)}
+          title="Avvia Vigil all'accesso a Windows"
+          desc="Vigil parte nascosto nell'area di notifica (l'icona vicino all'orologio): niente finestre, solo gli avvisi quando serve."
+        />
+      </section>
+
+      <section className="card">
         <h3 className="card-title">Rilevamento</h3>
         <Toggle
           checked={settings.heuristics}

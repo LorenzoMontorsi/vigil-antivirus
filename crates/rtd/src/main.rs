@@ -9,6 +9,8 @@
 //!   vigil-rtd pause <minuti|riavvio>  sospende la protezione (amministratore)
 //!   vigil-rtd resume               riprende la protezione
 //!   vigil-rtd exclude <percorso>   esclude un file/cartella (amministratore)
+//!   vigil-rtd vault-restore <id> [--exclude]   ripristina dalla quarantena del servizio (amministratore)
+//!   vigil-rtd vault-delete <id>...             elimina dalla quarantena del servizio (amministratore)
 //!
 //! Opzioni:
 //!   --sigs <cartella>       cartella di firme (ripetibile)
@@ -133,6 +135,8 @@ fn main() {
         "pause" => parse_pause(rest.first().map(String::as_str))
             .and_then(|seconds| command(vigil_engine::rtproto::Request::Pause { seconds })),
         "resume" => command(vigil_engine::rtproto::Request::Resume),
+        "vault-restore" => vault_restore(&rest),
+        "vault-delete" => vault_delete(&rest),
         "exclude" => match rest.first() {
             Some(p) => command(vigil_engine::rtproto::Request::AddExclusion { path: p.clone() }),
             None => Err("uso: vigil-rtd exclude <percorso>".into()),
@@ -143,6 +147,41 @@ fn main() {
         eprintln!("errore: {e}");
         std::process::exit(1);
     }
+}
+
+/// Deposito della quarantena del servizio: quello dichiarato dal servizio, altrimenti il predefinito.
+#[cfg(windows)]
+fn vault() -> Result<vigil_engine::quarantine::Quarantine, String> {
+    let dir = match ask(&vigil_engine::rtproto::Request::Status) {
+        Ok(vigil_engine::rtproto::Response::Status(s)) => s.quarantine_dir.map(PathBuf::from),
+        _ => None,
+    }
+    .unwrap_or_else(|| Options::parse(std::iter::empty()).map(|o| o.0.data_dir.join("quarantine")).unwrap_or_default());
+    vigil_engine::quarantine::Quarantine::open(&dir).map_err(|e| format!("quarantena {}: {e}", dir.display()))
+}
+
+#[cfg(windows)]
+fn vault_restore(args: &[String]) -> Result<(), String> {
+    let id = args.first().ok_or("uso: vigil-rtd vault-restore <id> [--exclude]")?;
+    let path = vault()?.restore(id, None).map_err(|e| e.to_string())?;
+    println!("ripristinato: {}", path.display());
+    if args.iter().any(|a| a == "--exclude") {
+        command(vigil_engine::rtproto::Request::AddExclusion { path: path.display().to_string() })?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn vault_delete(ids: &[String]) -> Result<(), String> {
+    if ids.is_empty() {
+        return Err("uso: vigil-rtd vault-delete <id>...".into());
+    }
+    let q = vault()?;
+    for id in ids {
+        q.delete(id).map_err(|e| format!("{id}: {e}"))?;
+    }
+    println!("eliminati: {}", ids.len());
+    Ok(())
 }
 
 /// "15" -> 15 minuti; "riavvio" -> fino al riavvio del servizio.

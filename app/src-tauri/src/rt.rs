@@ -250,6 +250,35 @@ pub fn resume() -> Result<(), String> {
     }
 }
 
+/// File isolati dal servizio (sola lettura: il deposito sta in ProgramData).
+pub fn vault_items(ui: &RtUiStatus) -> Vec<vigil_engine::quarantine::QuarantineItem> {
+    ui.status
+        .as_ref()
+        .and_then(|s| s.quarantine_dir.as_ref())
+        .and_then(|d| vigil_engine::quarantine::list_dir(std::path::Path::new(d)).ok())
+        .unwrap_or_default()
+}
+
+fn valid_vault_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// Ripristina un file isolato dal servizio, eventualmente escludendolo (UAC).
+pub fn vault_restore(id: &str, exclude: bool) -> Result<(), String> {
+    if !valid_vault_id(id) {
+        return Err("identificativo non valido".into());
+    }
+    run_as_admin(&service_exe()?, &format!("vault-restore {id}{}", if exclude { " --exclude" } else { "" }))
+}
+
+/// Elimina definitivamente file isolati dal servizio (UAC).
+pub fn vault_delete(ids: &[String]) -> Result<(), String> {
+    if ids.is_empty() || !ids.iter().all(|i| valid_vault_id(i)) {
+        return Err("identificativi non validi".into());
+    }
+    run_as_admin(&service_exe()?, &format!("vault-delete {}", ids.join(" ")))
+}
+
 /// Esclude un percorso dalla protezione in tempo reale (UAC).
 pub fn exclude(path: &str) -> Result<(), String> {
     if path.contains('"') {
