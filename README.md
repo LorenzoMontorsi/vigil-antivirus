@@ -19,10 +19,10 @@ Antivirus open source per Windows, scritto in **Rust** (motore, app, servizio) e
 | Cache delle scansioni | ✅ |
 | Quarantena cifrata (ChaCha20-Poly1305) con ripristino, anche automatica | ✅ |
 | Esclusioni per percorso ed estensione | ✅ |
-| Icona nell'area di notifica con menu (sospendi la protezione per 10 min / 1 h / fino al riavvio…) e avvio automatico all'accesso | ✅ |
+| Icona nell'area di notifica con menu (sospendi la protezione per 5 min … 1 ora o fino al riavvio) e avvio automatico all'accesso | ✅ |
 | Avvisi in basso a destra con azioni (Quarantena, Elimina, Escludi, Ignora) | ✅ |
 | Protezione in tempo reale: minifilter `VigilFlt` + servizio `vigil-rtd` (blocco dell'esecuzione, analisi dei file scritti, quarantena) | 🧪 funziona in VM |
-| Protezione script (AMSI): PowerShell, VBScript/JScript, macro Office | 🧪 funziona in VM |
+| Protezione script (AMSI): contenuti passati ad AMSI da PowerShell e dagli altri programmi che lo usano (provato con PowerShell) | 🧪 funziona in VM |
 | Anti-ransomware: analisi comportamentale delle scritture/rinomine di massa, file esca, blocco del processo | 🧪 funziona in VM |
 | Autodifesa: servizio non terminabile, cartelle di Vigil protette dalle modifiche | 🧪 funziona in VM |
 | Installer unico (app + servizio + driver) | 🛠️ in corso |
