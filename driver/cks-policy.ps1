@@ -27,7 +27,9 @@
     - "Vigil Platform Key"   (PK) : firma la policy (-> .p7b) e si arruola nell'UEFI del bersaglio.
 
 .NOTES
-  ConvertFrom-CIPolicy richiede Windows Enterprise/Education: esegui questo script nella VM Enterprise.
+  Funziona su Windows 10/11 incluso Pro (modulo ConfigCI): verificato che New-CIPolicy +
+  ConvertFrom-CIPolicy generano la policy firmata anche su Win11 Pro. Non serve l'edizione Enterprise
+  solo per GENERARE (la KB di riferimento lo dava per necessario: non lo e' su Win11 Pro attuale).
   Le chiavi private restano in Cert:\CurrentUser\My di QUESTA macchina. Esportane un backup .pfx
   (protetto da password) e CUSTODISCILO: ti serve per firmare driver/policy futuri. Non committarlo mai.
 
@@ -70,7 +72,7 @@ function Get-OrNew-SigningCert([string]$Subject) {
 
 if (-not (Get-Command New-CIPolicy -ErrorAction SilentlyContinue)) { throw 'Modulo ConfigCI assente: serve Windows 10/11.' }
 if (-not (Get-Command ConvertFrom-CIPolicy -ErrorAction SilentlyContinue)) {
-    throw 'ConvertFrom-CIPolicy assente: serve Windows ENTERPRISE/EDUCATION (eseguilo nella VM Enterprise).'
+    throw 'ConvertFrom-CIPolicy assente: manca il modulo ConfigCI (presente su Win10/11, anche Pro).'
 }
 if (-not (Test-Path $Sys)) { throw "VigilFlt.sys non trovato: compilalo e firmalo. $Sys" }
 
@@ -86,6 +88,9 @@ $pkCer = Join-Path $OutDir 'VigilPlatformKey.cer'
 Write-Host '== Certificati riusabili (restano in CurrentUser\My di questa macchina) =='
 $km = Get-OrNew-SigningCert $KmSubject
 $pk = Get-OrNew-SigningCert $PkSubject
+# Esporta subito i certificati PUBBLICI (DER): il PK serve anche come UpdatePolicySigner qui sotto.
+[IO.File]::WriteAllBytes($kmCer, $km.Export('Cert'))
+[IO.File]::WriteAllBytes($pkCer, $pk.Export('Cert'))
 
 # 1) Firma il driver con il certificato km, cosi' la policy che lo autorizza combacia col binario.
 Write-Host "== Firmo $Sys con $KmSubject =="
@@ -97,6 +102,11 @@ if ($LASTEXITCODE -ne 0) { throw "signtool (driver) ha fallito ($LASTEXITCODE)" 
 Write-Host '== Genero la policy di Code Integrity =='
 $rules = New-CIPolicyRule -DriverFilePath $Sys -Level LeafCertificate
 New-CIPolicy -FilePath $xml -Rules $rules -UserPEs:$false -ErrorAction Stop
+
+# La policy sara' FIRMATA (opzione 6 rimossa sotto): bisogna autorizzare chi potra' aggiornarla.
+# Aggiungiamo la PK come UpdatePolicySigner, altrimenti ConvertFrom-CIPolicy rifiuta la policy
+# ("Sono necessari criteri firmati, ma non e' specificato UpdatePolicySigner").
+Add-SignerRule -FilePath $xml -CertificatePath $pkCer -Update
 
 # Opzioni della policy:
 #   0  Enabled:UMCI                        -> RIMOSSO (solo kernel)
@@ -118,9 +128,7 @@ if (-not (Test-Path $p7)) { $p7 = (Join-Path $OutDir 'SiPolicy.bin.p7') }
 if (-not (Test-Path $p7)) { throw "firma prodotta non trovata accanto a $bin" }
 Move-Item $p7 $p7b -Force
 
-# 4) Esporta i certificati PUBBLICI (DER) per bersaglio e UEFI.
-[IO.File]::WriteAllBytes($kmCer, $km.Export('Cert'))
-[IO.File]::WriteAllBytes($pkCer, $pk.Export('Cert'))
+# 4) (certificati pubblici gia' esportati sopra: $kmCer = firmatario driver, $pkCer = Platform Key)
 
 Write-Host ''
 Write-Host "Prodotti in $OutDir :"

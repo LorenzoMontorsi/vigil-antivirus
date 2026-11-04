@@ -26,8 +26,8 @@ Microsoft (a pagamento). CKS è pensato per chi fa girare un **proprio** driver 
 
 ## "Una volta sola, per tutte le tue macchine"
 
-Due cose si generano **una volta** (in questa VM Enterprise) e si riusano su **tutte le tue** macchine;
-una terza va ripetuta su ogni PC fisico:
+Due cose si generano **una volta** (sulla macchina di build — va bene anche Win11 **Pro**) e si riusano
+su **tutte le tue** macchine; una terza va ripetuta su ogni PC fisico:
 
 | Cosa | Dove vive | Riusabile su tutte? |
 |---|---|---|
@@ -39,10 +39,12 @@ Sui bersagli non arriva **nessuna chiave privata**: solo il driver già firmato,
 certificati pubblici. È il motivo per cui questa via è sicura per le *tue* macchine ma **non** per la
 distribuzione a terzi (lì serve un **certificato EV** con firma per attestazione Microsoft).
 
-## Parte lato Vigil — nella VM Enterprise, una volta
+## Parte lato Vigil — una volta, anche su Win11 Pro
 
-`ConvertFrom-CIPolicy` gira solo su **Enterprise/Education**: esegui questi passi nella VM Enterprise
-(Win11 per bersagli Win11, va bene anche Win10 LTSC per bersagli Win10).
+Si può generare **sull'host**: `New-CIPolicy` + `ConvertFrom-CIPolicy` (modulo ConfigCI) funzionano su
+Windows 10/11 **incluso Pro** — verificato su Win11 Pro, la policy firmata viene prodotta. (La KB di
+riferimento dava l'Enterprise per necessario: non lo è su Win11 Pro attuale.) Per rispecchiare lo
+schema del bersaglio Win11, se vuoi, generala su Win11; per bersagli Win10 va bene Win10.
 
 ```powershell
 cd driver
