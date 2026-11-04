@@ -33,6 +33,7 @@ param(
     [int]$MemoryMB = 6144,
     [int]$Cpus = 4,
     [int]$DiskGB = 64,
+    [ValidateSet('whpx','tcg')][string]$Accel = 'whpx',
     [switch]$NoStart
 )
 $ErrorActionPreference = 'Stop'
@@ -67,9 +68,12 @@ New-Item -ItemType Directory -Force $VmDir, "$VmDir\ssh" | Out-Null
 
 # --- venv con pycdlib (ISO) + virt-firmware (varstore) ---
 $venv = Join-Path $VmDir '.tool'
-if (-not (Test-Path "$venv\Scripts\python.exe")) {
-    Invoke-Native { python -m venv $venv }
-    Invoke-Native { & "$venv\Scripts\python.exe" -m pip install -q --disable-pip-version-check pycdlib virt-firmware }
+if (-not (Test-Path "$venv\Scripts\virt-fw-vars.exe")) {
+    if (-not (Test-Path "$venv\Scripts\python.exe")) { Invoke-Native { python -m venv $venv } }
+    Invoke-Native { & "$venv\Scripts\python.exe" -m pip install -q --disable-pip-version-check pycdlib cryptography pefile pyyaml requests }
+    # virt-firmware dichiara crypt_r (modulo Unix) come dipendenza su Python >=3.13: non compila su
+    # Windows e NON serve al varstore. Lo installiamo senza dipendenze (le vere deps sono qui sopra).
+    Invoke-Native { & "$venv\Scripts\python.exe" -m pip install -q --disable-pip-version-check --no-deps virt-firmware }
 }
 $py = "$venv\Scripts\python.exe"
 $virtfw = "$venv\Scripts\virt-fw-vars.exe"
@@ -104,19 +108,21 @@ Der2Pem (Join-Path $CksDir 'VigilPlatformKey.cer') $pkPem
 Der2Pem (Join-Path $CksDir 'VigilKernelSigner.cer') $kmPem
 $vars = Join-Path $VmDir 'vigil-vars.fd'
 $guid = '11111111-2222-3333-4444-555555555555'   # GUID del proprietario delle chiavi Vigil
-# --secure-boot: arruola le chiavi Microsoft standard (KEK + db: Windows e UEFI CA) -> Windows parte.
-# --set-pk     : sovrascrive la PK con la nostra -> la policy CKS firmata dalla PK sarà accettata.
-# --add-db     : aggiunge anche il nostro firmatario kernel al db (innocuo; comodità).
-Invoke-Native { & $virtfw -i $ovmfVars --secure-boot --set-pk $guid $pkPem --add-db $guid $kmPem -o $vars }
+# --enroll-microsoft: arruola le chiavi Microsoft (PK/KEK/db: Windows e UEFI CA) -> Windows parte.
+# --set-pk          : sovrascrive la PK con la NOSTRA -> la policy CKS firmata dalla PK sarà accettata.
+# --add-db          : aggiunge anche il nostro firmatario kernel al db (innocuo; comodità).
+# --sb              : abilita Secure Boot in enforcement.
+# Verificato: PK=Vigil, KEK=MS 2011/2023, db=Windows/UEFI MS + Vigil, SecureBootEnable=ON.
+Invoke-Native { & $virtfw -i $ovmfVars --enroll-microsoft --set-pk $guid $pkPem --add-db $guid $kmPem --sb -o $vars }
 
 # --- disco ---
 $disk = Join-Path $VmDir 'disk.qcow2'
 $qemuImg = Join-Path $qdir 'qemu-img.exe'
 if (-not (Test-Path $disk)) { Invoke-Native { & $qemuImg create -f qcow2 $disk "${DiskGB}G" } }
 
-# --- accelerazione: WHPX se disponibile, altrimenti TCG (lento) ---
-$accel = 'whpx,kernel-irqchip=off'
-# (se WHPX non è abilitato, QEMU fallisce il boot: passa a 'tcg' manualmente o abilita la piattaforma Hyper-V.)
+# --- accelerazione: WHPX (serve la piattaforma Hyper-V) o TCG (lento ma sempre disponibile) ---
+# Se QEMU si lamenta di WHPX, rilancia con  -Accel tcg  oppure abilita "Windows Hypervisor Platform".
+$accel = if ($Accel -eq 'whpx') { 'whpx,kernel-irqchip=off' } else { 'tcg' }
 
 $serial = Join-Path $VmDir 'serial.log'
 $qargs = @(

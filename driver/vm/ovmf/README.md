@@ -10,9 +10,13 @@ Vedi `..\..\CKS.md` per la spiegazione e la procedura sul bersaglio reale.
 
 ## Prerequisiti (una volta)
 
-- **QEMU per Windows** — <https://qemu.weilnetz.de> (porta con sé il firmware OVMF: `edk2-*-secure-code.fd` + vars).
-- **Python 3** nel PATH (lo script crea un venv con `pycdlib` e `virt-firmware`).
-- **Accelerazione WHPX** (piattaforma Hyper-V) consigliata; senza, QEMU gira in TCG (molto lento).
+- **QEMU per Windows** — <https://qemu.weilnetz.de>. **Installato: QEMU 11.1.0** in `C:\Program Files\qemu`
+  (porta con sé OVMF: `edk2-x86_64-secure-code.fd` + `edk2-i386-vars.fd`, usati come coppia).
+- **Python 3** nel PATH (presente: 3.14). Lo script crea un venv con `pycdlib` + `virt-firmware`.
+  Nota: `virt-firmware` dichiara `crypt_r` (modulo Unix) su Python ≥3.13, che non compila su Windows e
+  non serve al varstore: `ovmf-vm.ps1` lo installa **senza dipendenze** dopo aver messo le vere deps.
+- **Accelerazione WHPX** (piattaforma "Windows Hypervisor Platform") consigliata; senza, usa
+  `ovmf-vm.ps1 -Accel tcg` (molto più lento ma sempre disponibile).
 - ISO di Windows **legittima**: la tua **LTSC 2019 Enterprise**, o una eval Enterprise ufficiale. **Mai ISO crackate.**
 - Il set CKS già generato (nella VM Enterprise) da `..\..\cks-policy.ps1` → `..\..\build\cks\`
   (`VigilPlatformKey.cer`, `VigilKernelSigner.cer`, `SiPolicy.p7b`).
@@ -44,6 +48,9 @@ cd driver\vm\ovmf
 | `vigil-firstboot-uefi.ps1` | primo avvio VM | SSH + niente sospensione; **niente** testsigning (proviamo CKS) |
 | `cks-vm-enroll.ps1` | in-guest | fida il cert, deposita `SiPolicy.p7b`, abilita CKS (SSDE), registra VigilFlt |
 
-> **Stato:** scritto ma **non ancora eseguito** (l'host di sviluppo è Win11 Pro senza QEMU). I dettagli
-> QEMU/OVMF (firmware, controller AHCI, prompt di boot da CD, accel WHPX) vanno messi a punto al primo
-> collaudo. Fallo **solo in VM**, mai sul Boot Camp d'uso quotidiano.
+> **Stato:** la **catena host è validata** su questo PC — QEMU 11.1.0 installato; `ovmf-vm.ps1` crea il
+> venv, installa `virt-firmware` (con l'aggiro di `crypt_r`) e **riscrive il varstore OVMF**: verificato
+> PK=Vigil, KEK=Microsoft 2011/2023, db=Windows/UEFI MS + Vigil, Secure Boot ON; `qemu-img` crea il disco.
+> Restano da collaudare in VM: l'**installazione di Windows** sotto OVMF (prompt "Press any key", controller
+> AHCI, accel WHPX vs TCG) e la parte **in-guest** (`cks-vm-enroll.ps1`: SSDE + load del driver). Fallo
+> **solo in VM**, mai sul Boot Camp d'uso quotidiano.
