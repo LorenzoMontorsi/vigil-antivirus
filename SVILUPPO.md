@@ -89,8 +89,11 @@ Da fare:
 - ClamAV sul percorso in tempo reale, AMSI, ETW, autodifesa, installer unico (app + servizio + driver)
 - altitudine ufficiale da Microsoft e firma del driver per poterlo usare fuori dalla VM
   - senza certificato a pagamento, sui propri PC Win10/11 si può caricare il driver autofirmato via
-    **Custom Kernel Signers** (niente test-signing, Secure Boot acceso): `driver\cks-policy.ps1` genera la
-    policy di Code Integrity, procedura completa e avvertenze in `driver\CKS.md`
+    **Custom Kernel Signers** (niente test-signing, Secure Boot acceso): `driver\cks-policy.ps1` crea i
+    certificati riusabili, firma il driver e genera la policy di Code Integrity **firmata** (`SiPolicy.p7b`).
+    Abilitazione sul bersaglio: **SSDE** su Win11, **HyperSine** su Win10. Un solo set di chiavi per tutte
+    le proprie macchine; l'arruolamento della Platform Key in UEFI resta manuale, una volta per PC fisico.
+    Procedura completa e avvertenze in `driver\CKS.md`
 
 ## 5. Prossimo passo: installer unico (piano, non ancora implementato)
 

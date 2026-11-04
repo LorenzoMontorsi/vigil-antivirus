@@ -24,35 +24,77 @@ Se tutto questo è troppo, su Windows 10/11 resta valido il **test-signing** (se
 per un prodotto distribuito a terzi — l'unica via "pulita" è un **certificato EV** con firma per attestazione di
 Microsoft (a pagamento). CKS è pensato per chi fa girare un **proprio** driver sulle **proprie** macchine.
 
-## Parte lato Vigil (questa la prepari e la verifichi qui)
+## "Una volta sola, per tutte le tue macchine"
+
+Due cose si generano **una volta** (in questa VM Enterprise) e si riusano su **tutte le tue** macchine;
+una terza va ripetuta su ogni PC fisico:
+
+| Cosa | Dove vive | Riusabile su tutte? |
+|---|---|---|
+| Certificati **km** (firma driver) e **PK** (firma policy) — chiavi **private** | solo su questa macchina di build (`Cert:\CurrentUser\My`) | n/a — **non lasciano** mai la build |
+| `SiPolicy.p7b` firmata + `VigilFlt.sys` firmato + certificati **pubblici** (`.cer`) | li copi sui bersagli | ✅ **sì**, lo stesso set ovunque |
+| **Arruolamento della PK** nel firmware UEFI | NVRAM del singolo PC | ❌ **no** — a mano, una volta per ogni PC |
+
+Sui bersagli non arriva **nessuna chiave privata**: solo il driver già firmato, la policy firmata e i
+certificati pubblici. È il motivo per cui questa via è sicura per le *tue* macchine ma **non** per la
+distribuzione a terzi (lì serve un **certificato EV** con firma per attestazione Microsoft).
+
+## Parte lato Vigil — nella VM Enterprise, una volta
+
+`ConvertFrom-CIPolicy` gira solo su **Enterprise/Education**: esegui questi passi nella VM Enterprise
+(Win11 per bersagli Win11, va bene anche Win10 LTSC per bersagli Win10).
 
 ```powershell
 cd driver
 .\build.ps1                 # compila VigilFlt.sys
-.\sign-test.ps1            # lo firma col certificato "Vigil Test Signing"
-.\cks-policy.ps1          # genera la policy di Code Integrity che autorizza quel firmatario nel kernel
+.\cks-policy.ps1            # crea i certificati, firma il driver, genera e FIRMA la policy
 ```
 
-Esce in `driver\build\cks\`:
+`cks-policy.ps1` crea/riusa due certificati autofirmati (`Vigil Kernel Signer`, `Vigil Platform Key`),
+firma `VigilFlt.sys` col primo, e produce in `driver\build\cks\`:
 
 | File | Cos'è |
 |---|---|
-| `VigilCIPolicy.xml` | la policy in chiaro, per revisionarla (regola *Signer = Vigil Test Signing*, scenario **131 = kernel**) |
-| `VigilCIPolicy.cip` | la policy **compilata**, da firmare e installare con la procedura CKS |
-| `VigilKernelSigner.cer` | il certificato pubblico del firmatario, da rendere fidato sul bersaglio |
+| `SiPolicy.p7b` | la policy **compilata e firmata dalla PK** — da copiare in `EFI\Microsoft\Boot\SiPolicy.p7b` |
+| `VigilCIPolicy.xml` | la policy in chiaro (regola *Signer = Vigil Kernel Signer*, scenario **131 = kernel**), per revisione |
+| `VigilKernelSigner.cer` | certificato del **firmatario del driver** → da rendere **fidato** sul bersaglio (Root + TrustedPublisher) |
+| `VigilPlatformKey.cer` | certificato della **Platform Key** → da **arruolare nell'UEFI** del bersaglio |
 
-## Parte lato sistema (macchina di prova, seguendo HyperSine)
+**Backup delle chiavi** (ti serve per firmare driver/policy futuri; NON committarlo — `build\` è in `.gitignore`):
 
-In sintesi (i comandi esatti sono nel repo di riferimento):
+```powershell
+Export-PfxCertificate -Cert Cert:\CurrentUser\My\<THUMB_KM> -FilePath build\cks\VigilKernelSigner.pfx -Password (Read-Host -AsSecureString)
+Export-PfxCertificate -Cert Cert:\CurrentUser\My\<THUMB_PK> -FilePath build\cks\VigilPlatformKey.pfx  -Password (Read-Host -AsSecureString)
+```
 
-1. genera/possiedi le chiavi di Secure Boot (PK/KEK/db) sulla macchina di prova;
-2. **firma** `VigilCIPolicy.cip` con una chiave inclusa nel tuo `db`;
-3. deposita la policy firmata nella partizione **EFI** dove CKS la cerca;
-4. abilita i **Custom Kernel Signers** (riavvio in *Setup Mode* dell'UEFI);
-5. installa il **driver di persistenza** per non far ridisattivare CKS da `sppsvc`;
-6. riavvia: ora `VigilFlt.sys` (firmato "Vigil Test Signing") si carica **senza** test-signing.
+## Parte lato sistema — su ogni bersaglio
 
-Verifica finale: `fltmc filters` elenca `VigilFlt`, e il servizio `VigilRtd` parte con la dipendenza dal driver.
+Prerequisito **una volta per PC fisico**: entra nell'UEFI e **arruola `VigilPlatformKey.cer` come PK**
+(firmware in *Setup/Custom Mode* → *Enroll/Add PK*; il menù varia per marca). Questo è il gesto manuale
+che **non** si può saltare né fare da Windows.
 
-> Stato: la parte **lato Vigil** (policy + certificato) è generata e verificata. La parte **UEFI/CKS** va
-> collaudata su un Windows 10 Enterprise/Education di prova con la Platform Key in proprio possesso.
+Poi, da Windows (admin):
+
+1. rendi **fidato** il firmatario del driver:
+   `certutil -addstore Root build\cks\VigilKernelSigner.cer` e `certutil -addstore TrustedPublisher build\cks\VigilKernelSigner.cer`
+   (il servizio Vigil ha già `--trust-cert <cer>` per farlo senza `certutil`);
+2. copia la policy firmata: `copy build\cks\SiPolicy.p7b "%SystemDrive%\EFI\Microsoft\Boot\SiPolicy.p7b"`
+   (monta la partizione EFI con `mountvol` se non è visibile);
+3. **abilita i Custom Kernel Signers** per questo boot:
+   - **Win11 (24H2):** usa **SSDE** (`ssde_enable.exe`) — <https://github.com/valinet/ssde>
+   - **Win10:** usa **CKS-HyperSine** (`ckspdrv`) — <https://github.com/HyperSine/Windows10-CustomKernelSigners>
+4. installa il **driver di persistenza** del tool (SSDE: `ssde.sys` boot-start) per non far ridisattivare
+   CKS da `sppsvc` dopo ~10 minuti; **non riavviare** prima di questo passo o la policy va persa;
+5. riavvia: ora `VigilFlt.sys` (firmato *Vigil Kernel Signer*) si carica **senza** test-signing e con
+   Secure Boot acceso.
+
+Verifica: `fltmc filters` elenca `VigilFlt`, e il servizio real-time parte con la dipendenza dal driver.
+Lo stato della licenza CKS si legge in `HKLM\SYSTEM\ControlSet001\Control\CI\Protected\Licensed` (deve essere `1`).
+
+> **Errore 577** all'avvio del servizio (segnalato con SSDE): è un conflitto con **HVCI/Memory Integrity**.
+> Disattiva Memory Integrity (Sicurezza di Windows → Sicurezza dispositivo → Isolamento core) o la relativa
+> chiave di registro, poi riavvia.
+
+> Stato: la parte **lato Vigil** (certificati + policy firmata) è scriptata e verificabile nella VM. La parte
+> **UEFI/CKS** (arruolamento PK + SSDE/HyperSine + persistenza) va collaudata nella VM Enterprise con la
+> Platform Key in proprio possesso, prima di toccare qualsiasi macchina fisica.
