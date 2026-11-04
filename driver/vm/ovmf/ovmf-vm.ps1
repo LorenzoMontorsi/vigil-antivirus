@@ -34,6 +34,10 @@ param(
     [int]$Cpus = 4,
     [int]$DiskGB = 64,
     [ValidateSet('whpx','tcg')][string]$Accel = 'whpx',
+    # Chiave prodotto per l'unattend. Per una ISO LTSC usa la chiave KMS client pubblica (default).
+    # Per una ISO Enterprise EVAL (es. ...CLIENTENTERPRISEEVAL...) passa '' : l'edizione è unica e la
+    # chiave va OMESSA, altrimenti il Setup fallisce la scelta edizione.
+    [string]$ProductKey = 'M7XTQ-FN8P6-TTKYV-9D4CC-J462D',
     [switch]$NoStart
 )
 $ErrorActionPreference = 'Stop'
@@ -90,7 +94,17 @@ if (-not (Test-Path $key)) {
 $stage = Join-Path $VmDir 'unattend-src'
 Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $stage | Out-Null
-Copy-Item "$here\autounattend-uefi.xml" (Join-Path $stage 'autounattend.xml') -Force
+# Copia l'unattend impostando (o rimuovendo) la chiave prodotto secondo -ProductKey.
+[xml]$ua = Get-Content "$here\autounattend-uefi.xml"
+$nsm = New-Object System.Xml.XmlNamespaceManager($ua.NameTable); $nsm.AddNamespace('u','urn:schemas-microsoft-com:unattend')
+$pkNode = $ua.SelectSingleNode('//u:UserData/u:ProductKey', $nsm)
+if ([string]::IsNullOrWhiteSpace($ProductKey)) {
+    if ($pkNode) { [void]$pkNode.ParentNode.RemoveChild($pkNode); Write-Host 'unattend: chiave prodotto OMESSA (ISO eval / edizione unica).' }
+} else {
+    $keyNode = $ua.SelectSingleNode('//u:UserData/u:ProductKey/u:Key', $nsm)
+    if ($keyNode) { $keyNode.InnerText = $ProductKey }
+}
+$ua.Save((Join-Path $stage 'autounattend.xml'))
 Copy-Item "$here\vigil-firstboot-uefi.ps1" $stage -Force
 Copy-Item "$key.pub" (Join-Path $stage 'authorized_key.pub') -Force
 $unattendIso = Join-Path $VmDir 'unattend.iso'

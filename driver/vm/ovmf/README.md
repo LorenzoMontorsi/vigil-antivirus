@@ -26,7 +26,10 @@ Vedi `..\..\CKS.md` per la spiegazione e la procedura sul bersaglio reale.
 ```powershell
 # 1) Sull'host con QEMU: crea e avvia la VM (PK di Vigil pre-provisionata nel firmware).
 cd driver\vm\ovmf
-.\ovmf-vm.ps1 -WindowsIso C:\percorso\it_windows_10_enterprise_ltsc_2019_x64_dvd_2fa02691.iso
+# Win11 Enterprise EVAL (edizione unica, niente chiave) — ambiente nativo Win11, zero incertezza:
+.\ovmf-vm.ps1 -WindowsIso C:\Users\Elena\Downloads\26300.9457...CLIENTENTERPRISEEVAL_OEMRET_x64FRE_it-it.iso -ProductKey ''
+# oppure LTSC 2019 (usa la chiave KMS client di default):
+# .\ovmf-vm.ps1 -WindowsIso C:\...\it_windows_10_enterprise_ltsc_2019_x64_dvd_2fa02691.iso
 #   -> al prompt "Press any key to boot from CD" premi un tasto (unica interazione manuale).
 #   -> l'installazione è automatica; la VM si riavvia e alza SSH su 127.0.0.1:2222.
 
