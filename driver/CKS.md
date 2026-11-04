@@ -98,3 +98,10 @@ Lo stato della licenza CKS si legge in `HKLM\SYSTEM\ControlSet001\Control\CI\Pro
 > Stato: la parte **lato Vigil** (certificati + policy firmata) è scriptata e verificabile nella VM. La parte
 > **UEFI/CKS** (arruolamento PK + SSDE/HyperSine + persistenza) va collaudata nella VM Enterprise con la
 > Platform Key in proprio possesso, prima di toccare qualsiasi macchina fisica.
+
+## Collaudo automatico in VM (QEMU + OVMF)
+
+Per provare il flusso **end-to-end senza gesti manuali sul firmware**, c'è un banco OVMF in
+`driver\vm\ovmf\` (vedi il suo `README.md`): con QEMU + OVMF il varstore UEFI si **riscrive prima del
+boot**, così la **Platform Key di Vigil** viene pre-provisionata nel firmware (PK = Vigil, KEK/db =
+Microsoft, così Windows parte). Lì l'arruolamento PK è automatico; su hardware fisico resta manuale.
