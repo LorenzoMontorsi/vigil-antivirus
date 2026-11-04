@@ -88,6 +88,9 @@ Da fare:
 - la quarantena del servizio sta in `C:\ProgramData\Vigil\quarantine`: va mostrata nella pagina Quarantena
 - ClamAV sul percorso in tempo reale, AMSI, ETW, autodifesa, installer unico (app + servizio + driver)
 - altitudine ufficiale da Microsoft e firma del driver per poterlo usare fuori dalla VM
+  - senza certificato a pagamento, sui propri PC Win10/11 si può caricare il driver autofirmato via
+    **Custom Kernel Signers** (niente test-signing, Secure Boot acceso): `driver\cks-policy.ps1` genera la
+    policy di Code Integrity, procedura completa e avvertenze in `driver\CKS.md`
 
 ## 5. Prossimo passo: installer unico (piano, non ancora implementato)
 
