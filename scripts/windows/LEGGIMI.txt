@@ -1,0 +1,10 @@
+Script di installazione Windows (da lanciare come Amministratore, chiedono l'UAC da soli).
+
+  installa-servizio-rtd.bat  - installa e avvia il servizio real-time VigilRtd.
+                               Richiede vigil-rtd.exe nella stessa cartella e il driver
+                               VigilFlt gia' installato (vedi driver\cks\).
+  installa-amsi.bat          - registra il provider AMSI (vigil_amsi.dll nella stessa
+                               cartella). Richiede VigilRtd attivo.
+
+Ordine consigliato: driver\cks\installa-driver-testsigning.bat (o -cks.bat), riavvio,
+installa-servizio-rtd.bat, installa-amsi.bat.
