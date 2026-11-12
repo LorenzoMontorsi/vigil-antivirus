@@ -37,7 +37,13 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../../vendor/clamav/": "clamav/"
+      "../../vendor/clamav/": "clamav/",
+      "payload/": "rt/"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/hooks.nsh"
+      }
     }
   }
 }

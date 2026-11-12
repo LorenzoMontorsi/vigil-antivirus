@@ -79,6 +79,8 @@ const rtStatus = {
   installed: true,
   running: true,
   amsi_installed: true,
+  driver_installed: true,
+  driver_running: true,
   status: {
     version: "0.1.0",
     driver_connected: true,
@@ -151,7 +153,7 @@ export function installDevMock() {
         case "toast_action":
           return args.action === "quarantine" ? "Messo in quarantena" : "Fatto";
         case "rt_status":
-          return rtDemo ? rtStatus : { installed: false, running: false, status: null, amsi_installed: false };
+          return rtDemo ? rtStatus : { installed: false, running: false, status: null, amsi_installed: false, driver_installed: false, driver_running: false };
         case "rt_vault_list":
           return rtDemo ? [vault[0]] : [];
         case "rt_events":

@@ -29,8 +29,9 @@ Need $sys; Need $p7b; Need $cer
 if (-not (Confirm-SecureBootUEFI)) { Write-Warning 'Secure Boot NON attivo: questa VM non sta provando davvero CKS.' }
 
 # 1) Rendi fidato il firmatario del driver (Root + TrustedPublisher).
-Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\Root          | Out-Null
-Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+# certutil: Import-Certificate su alcuni PC dà E_ACCESSDENIED anche da amministratore.
+certutil.exe -f -addstore Root $cer | Out-Null
+certutil.exe -f -addstore TrustedPublisher $cer | Out-Null
 Write-Host '[1] certificato del driver reso fidato.'
 
 # 2) Deposita la policy firmata nella partizione EFI, dove CKS la cerca.
@@ -53,11 +54,14 @@ if (Test-Path $ssde) {
 # 4) Registra VigilFlt come minifilter boot-start (il servizio real-time ne dipenderà).
 $drvDst = "$env:SystemRoot\System32\drivers\VigilFlt.sys"
 Copy-Item $sys $drvDst -Force
-sc.exe create VigilFlt type= filesys start= boot binPath= $drvDst group= FSFilter Activity Monitor | Out-Null
-# Altitudine (deve combaciare con quella del driver / del servizio real-time).
-reg add 'HKLM\SYSTEM\CurrentControlSet\Services\VigilFlt\Instances' /v DefaultInstance /t REG_SZ /d 'VigilFlt Instance' /f | Out-Null
-reg add 'HKLM\SYSTEM\CurrentControlSet\Services\VigilFlt\Instances\VigilFlt Instance' /v Altitude /t REG_SZ /d '328010' /f | Out-Null
-reg add 'HKLM\SYSTEM\CurrentControlSet\Services\VigilFlt\Instances\VigilFlt Instance' /v Flags /t REG_DWORD /d 0 /f | Out-Null
+sc.exe create VigilFlt type= filesys start= boot binPath= $drvDst group= 'FSFilter Anti-Virus' depend= FltMgr | Out-Null
+# Altitudine e gruppo come in VigilFlt.inf (328010 è di Defender/WdFilter!). Istanza sia in
+# Instances sia in Parameters\Instances (quella usata dall'INF su Windows 10 1903+).
+foreach ($base in 'HKLM\SYSTEM\CurrentControlSet\Services\VigilFlt\Instances', 'HKLM\SYSTEM\CurrentControlSet\Services\VigilFlt\Parameters\Instances') {
+    reg add $base /v DefaultInstance /t REG_SZ /d 'VigilFlt Instance' /f | Out-Null
+    reg add "$base\VigilFlt Instance" /v Altitude /t REG_SZ /d '328500' /f | Out-Null
+    reg add "$base\VigilFlt Instance" /v Flags /t REG_DWORD /d 0 /f | Out-Null
+}
 Write-Host '[4] VigilFlt registrato (boot-start).'
 
 Write-Host ''

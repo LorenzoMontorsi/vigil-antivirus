@@ -8,3 +8,4 @@ node_modules/
 /driver/packages
 /driver/tools
 /driver/build
+/app/src-tauri/payload/*.exe

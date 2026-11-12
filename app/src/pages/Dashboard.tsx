@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { api, formatAgo, nf, rtState, type RtEvent } from "../api";
+import { api, formatAgo, nf, rtMissingText, rtState, type RtEvent } from "../api";
 import type { RealtimeController } from "../useRealtime";
 import type { ScanController } from "../useScan";
 import type { StatusController } from "../useStatus";
@@ -102,7 +102,7 @@ export default function Dashboard({ scan, status: st, rt, go }: Props) {
             : ["warn", "Fermo", st.clamavError ?? "clamd non è in esecuzione"];
 
   const rtModule: { desc: string; state: ModuleState; label: string } = {
-    not_installed: { state: "off" as const, label: "Non installata", desc: "Richiede il driver VigilFlt (per ora solo nella VM di test)" },
+    not_installed: { state: "off" as const, label: "Non installata", desc: rtMissingText(rt.status) },
     stopped: { state: "warn" as const, label: "Disattivata", desc: "Il servizio VigilRtd è fermo: attivala dalle Impostazioni" },
     starting: { state: "busy" as const, label: "Avvio…", desc: "Collegamento al driver in corso" },
     paused: { state: "warn" as const, label: "Sospesa", desc: "Riprendila dal menu dell'icona vicino all'orologio" },

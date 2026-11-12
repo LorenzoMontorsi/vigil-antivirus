@@ -1,0 +1,4 @@
+Qui scripts\build-payload.ps1 copia vigil-rtd.exe (servizio di protezione in tempo reale) prima di
+"npm run tauri build". L'installer lo mette in $INSTDIR\rt\ e, se sul PC c'e' il driver VigilFlt,
+lo copia in "C:\Program Files\Vigil" e registra il servizio VigilRtd (windows\hooks.nsh).
+Gli eseguibili non vanno in git.

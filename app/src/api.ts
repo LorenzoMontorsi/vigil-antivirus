@@ -235,10 +235,21 @@ export interface RtUiStatus {
   running: boolean;
   status: RtStatus | null;
   amsi_installed: boolean;
+  /** Il driver VigilFlt è registrato in Windows. */
+  driver_installed: boolean;
+  /** Il driver VigilFlt è caricato. */
+  driver_running: boolean;
 }
 
 /** Stato sintetico per l'interfaccia. */
 export type RtState = "not_installed" | "stopped" | "starting" | "active" | "paused";
+
+/** Spiega perché la protezione in tempo reale non è installata. */
+export function rtMissingText(s: RtUiStatus | null): string {
+  if (s?.driver_running) return "Driver VigilFlt caricato, ma il servizio VigilRtd non è installato";
+  if (s?.driver_installed) return "Driver VigilFlt installato ma non caricato (serve la firma o la modalità test) e servizio VigilRtd mancante";
+  return "Driver VigilFlt e servizio VigilRtd non installati";
+}
 
 export function rtState(s: RtUiStatus | null): RtState {
   if (!s || !s.installed) return "not_installed";

@@ -361,9 +361,11 @@ function RealtimeSection({ rt }: { rt: RealtimeController }) {
       </div>
       {state === "not_installed" ? (
         <p className="hint">
-          Il servizio VigilRtd e il driver VigilFlt non sono installati su questo PC. Per ora funzionano solo in una
-          macchina virtuale di test con la firma dei driver in modalità test: per un PC normale serve un driver firmato
-          da Microsoft.
+          {rt.status?.driver_running
+            ? "Il driver VigilFlt è caricato, ma il servizio VigilRtd non è installato: installalo con «vigil-rtd install» da amministratore (lo fa anche l'installer di Vigil)."
+            : rt.status?.driver_installed
+              ? "Il driver VigilFlt è installato ma non è caricato: serve la firma dei driver in modalità test o Custom Kernel Signers (vedi driver/CKS.md). Manca anche il servizio VigilRtd."
+              : "Il servizio VigilRtd e il driver VigilFlt non sono installati su questo PC. Il driver si carica solo con la firma in modalità test o con Custom Kernel Signers (driver/cks): per un PC qualsiasi serve un driver firmato da Microsoft."}
         </p>
       ) : (
         <>

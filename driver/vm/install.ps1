@@ -6,8 +6,8 @@ Stop-Service VigilRtd -Force -ErrorAction SilentlyContinue
 Start-Sleep 2
 fltmc unload VigilFlt 2>$null | Out-Null
 
-Import-Certificate -FilePath C:\Vigil\VigilTest.cer -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
-Import-Certificate -FilePath C:\Vigil\VigilTest.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+certutil.exe -f -addstore Root C:\Vigil\VigilTest.cer | Out-Null
+certutil.exe -f -addstore TrustedPublisher C:\Vigil\VigilTest.cer | Out-Null
 Copy-Item C:\Vigil\VigilFlt.sys C:\Windows\System32\drivers\VigilFlt.sys -Force
 
 # Il servizio va creato come driver di file system (type= filesys): un servizio

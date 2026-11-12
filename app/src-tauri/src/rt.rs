@@ -15,7 +15,7 @@ use std::{
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
-use vigil_engine::rtproto::{PIPE_NAME, Request, Response, RtEvent, RtEventKind, RtStatus, SERVICE_NAME};
+use vigil_engine::rtproto::{DRIVER_SERVICE_NAME, PIPE_NAME, Request, Response, RtEvent, RtEventKind, RtStatus, SERVICE_NAME};
 
 const MAX_UI_EVENTS: usize = 100;
 
@@ -29,6 +29,10 @@ pub struct RtUiStatus {
     pub status: Option<RtStatus>,
     /// Il provider AMSI di Vigil è registrato in Windows.
     pub amsi_installed: bool,
+    /// Il driver VigilFlt è registrato in Windows.
+    pub driver_installed: bool,
+    /// Il driver VigilFlt è caricato.
+    pub driver_running: bool,
 }
 
 /// CLSID del provider AMSI (vedi crates/amsi).
@@ -82,8 +86,9 @@ pub fn query(req: &Request) -> Result<Response, String> {
     serde_json::from_str(&out).map_err(|e| format!("risposta non valida: {e}"))
 }
 
+/// (registrato, in esecuzione) di un servizio o driver di Windows.
 #[cfg(windows)]
-fn service_state() -> (bool, bool) {
+fn service_state(name: &str) -> (bool, bool) {
     use windows_service::{
         service::{ServiceAccess, ServiceState},
         service_manager::{ServiceManager, ServiceManagerAccess},
@@ -91,14 +96,14 @@ fn service_state() -> (bool, bool) {
     let Ok(manager) = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT) else {
         return (false, false);
     };
-    match manager.open_service(SERVICE_NAME, ServiceAccess::QUERY_STATUS) {
+    match manager.open_service(name, ServiceAccess::QUERY_STATUS) {
         Ok(s) => (true, s.query_status().is_ok_and(|st| st.current_state == ServiceState::Running)),
         Err(_) => (false, false),
     }
 }
 
 #[cfg(not(windows))]
-fn service_state() -> (bool, bool) {
+fn service_state(_name: &str) -> (bool, bool) {
     (false, false)
 }
 
@@ -155,7 +160,8 @@ fn notify_pause_change(app: &AppHandle, before: u64, after: u64) {
 
 fn poll_once(app: &AppHandle) {
     let rt = app.state::<Realtime>();
-    let (installed, running) = service_state();
+    let (installed, running) = service_state(SERVICE_NAME);
+    let (driver_installed, driver_running) = service_state(DRIVER_SERVICE_NAME);
     let status = if running {
         match query(&Request::Status) {
             Ok(Response::Status(s)) => Some(s),
@@ -196,7 +202,7 @@ fn poll_once(app: &AppHandle) {
     }
     rt.primed.store(true, Ordering::SeqCst);
 
-    let ui = RtUiStatus { installed, running, status, amsi_installed: amsi_installed() };
+    let ui = RtUiStatus { installed, running, status, amsi_installed: amsi_installed(), driver_installed, driver_running };
     crate::tray::update(app, &ui);
     let changed = {
         let mut cur = rt.ui.lock().unwrap();

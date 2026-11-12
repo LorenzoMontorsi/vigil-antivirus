@@ -95,7 +95,20 @@ Da fare:
     le proprie macchine; l'arruolamento della Platform Key in UEFI resta manuale, una volta per PC fisico.
     Procedura completa e avvertenze in `driver\CKS.md`
 
-## 5. Prossimo passo: installer unico (piano, non ancora implementato)
+## 5. Installer unico (in corso)
+
+Fatto (12 novembre 2026):
+- `npm run payload` (`scripts/build-payload.ps1`) compila `vigil-rtd` e lo mette in `app/src-tauri/payload/`;
+  `bundle.resources` lo porta in `$INSTDIR\rt\`. `app/src-tauri/windows/hooks.nsh`: se il driver VigilFlt è
+  registrato, POSTINSTALL (UAC) copia `vigil-rtd.exe` in `C:\Program Files\Vigil` e lancia `vigil-rtd install`
+  (firme in `%APPDATA%\dev.lorenzo.antivirus\{feeds,signatures}`, quarantena `C:\ProgramData\Vigil\quarantine`);
+  PREUNINSTALL lancia `vigil-rtd uninstall`.
+- Driver su un PC vero senza VM: `driver/cks/installa-driver-testsigning.bat` (test-signing) oppure
+  `driver/cks/installa-driver-cks.bat` (Custom Kernel Signers). Altitudine 328500, gruppo `FSFilter Anti-Virus`
+  (come `VigilFlt.inf`; 328010 è di Defender).
+- L'app distingue "driver caricato ma servizio VigilRtd mancante" da "niente installato".
+
+Piano originale (resta da fare: driver e AMSI dentro l'installer, `vigil-rtd setup/teardown`):
 
 Verificato: hook NSIS di Tauri `NSIS_HOOK_PREINSTALL/POSTINSTALL/PREUNINSTALL/POSTUNINSTALL`,
 chiavi `bundle.windows.nsis.installerHooks` e `installMode: "perMachine"`.
