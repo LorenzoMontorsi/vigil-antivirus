@@ -350,10 +350,14 @@ function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; title
 function RealtimeSection({ rt }: { rt: RealtimeController }) {
   const state = rtState(rt.status);
   const st = rt.status?.status;
+  const amsiInstalled = rt.status?.amsi_installed === true;
   const label = { not_installed: "Non installata", stopped: "Disattivata", starting: "Avvio…", active: "Attiva", paused: "Sospesa" }[state];
   const pill = { not_installed: "pill-off", stopped: "pill-warn", starting: "pill-busy", active: "pill-on", paused: "pill-warn" }[state];
+  const amsiLabel = !amsiInstalled ? "Non installata" : state === "active" ? "Attiva" : "In pausa";
+  const amsiPill = !amsiInstalled ? "pill-off" : state === "active" ? "pill-on" : "pill-warn";
   const on = state === "active" || state === "starting" || state === "paused";
   return (
+    <>
     <section className="card">
       <div className="card-title-row">
         <h3 className="card-title">Protezione in tempo reale</h3>
@@ -412,5 +416,19 @@ function RealtimeSection({ rt }: { rt: RealtimeController }) {
         </>
       )}
     </section>
+    <section className="card">
+      <div className="card-title-row">
+        <h3 className="card-title">Protezione script (AMSI)</h3>
+        <span className={`pill ${amsiPill}`}>{amsiLabel}</span>
+      </div>
+      <p className="hint">
+        {!amsiInstalled
+          ? "Il provider AMSI di Vigil non è registrato in Windows: PowerShell, VBScript, JScript e le macro di Office non vengono controllati. Registralo con «installa-amsi.bat» da amministratore (serve anche il servizio VigilRtd)."
+          : state === "active"
+            ? `${nf.format(st?.stats.scripts_checked ?? 0)} script controllati · ${nf.format(st?.stats.scripts_blocked ?? 0)} ${(st?.stats.scripts_blocked ?? 0) === 1 ? "bloccato" : "bloccati"}.`
+            : "Il provider è registrato, ma il servizio VigilRtd non è attivo: gli script non vengono analizzati finché la protezione in tempo reale non è avviata."}
+      </p>
+    </section>
+    </>
   );
 }

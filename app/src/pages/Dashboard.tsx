@@ -113,15 +113,21 @@ export default function Dashboard({ scan, status: st, rt, go }: Props) {
     },
   }[rs];
 
-  const amsiModule: { desc: string; state: ModuleState; label: string } = !rt.status?.amsi_installed
-    ? { state: "off", label: "Non installata", desc: "PowerShell, VBScript, JScript, macro di Office" }
+  // amsi_installed sta su RtUiStatus (rt.status), non sul RtStatus innestato (rt.status.status).
+  const amsiInstalled = rt.status?.amsi_installed === true;
+  const amsiModule: { desc: string; state: ModuleState; label: string } = !amsiInstalled
+    ? {
+        state: "off",
+        label: "Non installata",
+        desc: "Il provider AMSI di Vigil non è registrato in Windows. PowerShell, VBScript, JScript e le macro di Office non vengono controllati.",
+      }
     : rs === "active"
       ? {
           state: "on",
           label: "Attiva",
           desc: `${nf.format(rts?.stats.scripts_checked ?? 0)} script controllati · ${nf.format(rts?.stats.scripts_blocked ?? 0)} ${(rts?.stats.scripts_blocked ?? 0) === 1 ? "bloccato" : "bloccati"}`,
         }
-      : { state: "warn", label: "In pausa", desc: "Il servizio di protezione non è attivo" };
+      : { state: "warn", label: "In pausa", desc: "Il provider è registrato, ma il servizio VigilRtd non è attivo" };
 
   const modules: { name: string; desc: string; state: ModuleState; label: string }[] = [
     {
